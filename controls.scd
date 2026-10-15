@@ -6,12 +6,18 @@ lines with Command-Return while performing. Do not evaluate the whole file: it
 contains mutually exclusive examples such as mute/unmute and stop/start.
 */
 
+// LIFECYCLE — evaluate one line, then wait for completion before reloading
+~cwtStop.value;
+~spectrumStop.value;                           // normal spectrum fade
+~cwtStart.value;
+~spectrumStart.value;
+
 // TRACKED VOICES — selection, pitch, waveform, and master
 ~cwtConfig[\maxPolyphony] = 4;               // default 4; nonnegative hard ceiling
 ~cwtSetMinConfidence.value(0.0);             // default 0; valid 0..1
 ~cwtConfig[\pitchMode] = \continuous;        // default; also \midi or \midiOutput
-~cwtSetBaseNote.value(48);                   // default 48; MIDI coordinate 24..72
-~cwtSetPitchSpan.value(36);                  // default 36; 12..72 semitones
+~cwtSetBaseNote.value(24);                   // default 48; MIDI coordinate 24..72
+~cwtSetPitchSpan.value(24);                  // default 36; 12..72 semitones
 ~cwtSetBaseNote.value(36, \temperature);     // set optional sensor override
 ~cwtSetBaseNote.value(nil, \temperature);    // clear optional sensor override
 ~cwtSetPitchSpan.value(24, \temperature);    // set optional sensor override
@@ -56,8 +62,8 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 ~spectrumMute.value(\pressure, false);
 
 // FULL SPECTRUM — pitch and per-sensor waveform
-~spectrumSetBaseNote.value(48);                // default 48; valid 24..72
-~spectrumSetPitchSpan.value(36);               // default 36; 12..72 semitones
+~spectrumSetBaseNote.value(24);                // default 48; valid 24..72
+~spectrumSetPitchSpan.value(24);               // default 36; 12..72 semitones
 ~spectrumSetBaseNote.value(60, \temperature);  // set optional sensor override
 ~spectrumSetBaseNote.value(nil, \temperature); // clear optional sensor override
 ~spectrumSetPitchSpan.value(24, \temperature); // set optional sensor override
@@ -81,11 +87,18 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 ~spectrumStatus.value;
 ~spectrumInspect.value(\temperature, 0);       // sensor and scale index
 
-// LIFECYCLE — evaluate one line, then wait for completion before reloading
-~cwtStop.value;
-~spectrumStop.value;                           // normal spectrum fade
-~cwtStart.value;
-~spectrumStart.value;
+// Print current config settings (json)
+~cwtConfig.postln;
+~spectrumConfig.postln;
+
+// Pretty-print current config settings
+~cwtConfig.keys.asArray.sort.do { |key|
+    "%: %".format(key, ~cwtConfig[key]).postln;
+};
+~spectrumConfig.keys.asArray.sort.do { |key|
+    "%: %".format(key, ~spectrumConfig[key]).postln;
+};
+
 
 // PLANNED / UNSUPPORTED
 // SuperCollider MIDI output, per-sensor tracked waveforms, effects, FM,
