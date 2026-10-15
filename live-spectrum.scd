@@ -5,6 +5,8 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 ~spectrumConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
     mode: \physical, referenceTempC: 20, referenceRH: 50, referencePressureHpa: 1013.25,
+    baseNote: 48.0, pitchSpan: 36.0,
+    temperatureWaveform: \sine, humidityWaveform: \sine, pressureWaveform: \sine,
     temperatureGain: 1.0, humidityGain: 1.0, pressureGain: 1.0,
     physicalGain: 0.1, significanceGain: 0.002, masterGain: 0.1,
     amplitudeCeiling: 0.02, smoothingSeconds: 2.0, staleTimeoutSeconds: 15.0,
@@ -16,7 +18,17 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 // OSC strings arrive as Symbols in SuperCollider 3.14's native decoder.
 ~spectrumText = { |v| v.isString or: { v.isKindOf(Symbol) } };
 ~spectrumSafe = { |v, maximum=100| if(~spectrumFinite.value(v)) { v.clip(0, maximum) } { 0 } };
-~spectrumPitch = { |hz| (48 + (36 * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))).midicps };
+~spectrumPitch = { |hz, config|
+    var c = config ? ~spectrumConfig;
+    (c[\baseNote] + (c[\pitchSpan] * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))).midicps
+};
+~spectrumWaveControls = { |waveform|
+    switch(waveform,
+        \sine, { (mix: 0.0, width: 0.5, level: 1.0) },
+        \triangle, { (mix: 1.0, width: 0.5, level: 0.8) },
+        \saw, { (mix: 1.0, width: 0.001, level: 0.55) },
+        { nil })
+};
 ~spectrumFactor = { |signal|
     var c = ~spectrumConfig, t = c[\referenceTempC], rh = c[\referenceRH], p = c[\referencePressureHpa];
     var valid = [t, rh, p].every(~spectrumFinite) and: { t > -100 } and: { t < 100 }
@@ -31,11 +43,16 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
         row[1] / row[4].sqrt
     } { nil }
 };
-~spectrumBankDef = SynthDef(\weatherSpectrumBank, { |out=0, smoothing=2|
+~spectrumBankDef = SynthDef(\weatherSpectrumBank, { |out=0, smoothing=2, waveMix=0, waveWidth=0.5, waveLevel=1|
     var freqs = NamedControl.kr(\freqs, Array.fill(48, 440));
     var amps = NamedControl.kr(\amps, Array.fill(48, 0));
+    var pitch = Lag.kr(freqs, 0.2);
+    var sine = SinOsc.ar(pitch);
+    var shaped = VarSaw.ar(pitch, 0, Lag.kr(waveWidth, 0.08));
+    var waveform = XFade2.ar(sine, shaped, (Lag.kr(waveMix, 0.08) * 2) - 1)
+        * Lag.kr(waveLevel, 0.08);
     // Lag time is the time to settle to 0.1%, not an exponential time constant.
-    Out.ar(out, Mix(SinOsc.ar(Lag.kr(freqs, 0.2)) * Lag.kr(amps, smoothing.max(0.02))));
+    Out.ar(out, Mix(waveform * Lag.kr(amps, smoothing.max(0.02))));
 });
 ~spectrumOutputDef = SynthDef(\weatherSpectrumOutput, { |bus=0, master=0, gate=1, release=2|
     var input = In.ar(bus, 1) * Lag.kr(master, 0.2);
@@ -48,9 +65,12 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 ~spectrumUpdate = { |run|
     var c = ~spectrumConfig, clamps = 0;
     run[\streams].values.do { |st|
-        var amps = Array.fill(48, 0.0), freqs = Array.fill(48, 440.0);
-        var gain = ~spectrumSafe.value(c[(st[\signal].asString ++ "Gain").asSymbol]);
-        var modeGain = ~spectrumSafe.value(c[if(c[\mode] == \physical) { \physicalGain } { \significanceGain }]);
+        var amps = Array.fill(48, 0.0), freqs = Array.fill(48, 440.0), requestedWave, wave, gain, modeGain;
+        requestedWave = c[(st[\signal].asString ++ "Waveform").asSymbol];
+        wave = ~spectrumWaveControls.value(requestedWave);
+        if(wave.isNil) { requestedWave = \sine; wave = ~spectrumWaveControls.value(\sine) };
+        gain = ~spectrumSafe.value(c[(st[\signal].asString ++ "Gain").asSymbol]);
+        modeGain = ~spectrumSafe.value(c[if(c[\mode] == \physical) { \physicalGain } { \significanceGain }]);
         if(st[\ready] and: { st[\muted].not } and: { st[\rows].size == 48 }) {
             st[\rows].do { |row, i|
                 var converted = if(c[\mode] == \physical) { row[1] * ~spectrumFactor.value(st[\signal]) } {
@@ -58,7 +78,7 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
                 };
                 var target = converted * gain * modeGain;
                 var ceiling = ~spectrumSafe.value(c[\amplitudeCeiling], 0.1);
-                freqs[i] = ~spectrumPitch.value(row[0]);
+                freqs[i] = ~spectrumPitch.value(row[0], c);
                 if(~spectrumFinite.value(target).not or: { target < 0 } or: { target > ceiling }) { clamps = clamps + 1 };
                 amps[i] = ~spectrumSafe.value(target, ceiling);
             };
@@ -67,6 +87,11 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
             st[\targets] = amps; st[\frequencies] = freqs; st[\smooth] = c[\smoothingSeconds];
             st[\synth].setn(\amps, amps, \freqs, freqs);
             st[\synth].set(\smoothing, ~spectrumSafe.value(c[\smoothingSeconds], 30).max(0.02));
+        };
+        if(st[\waveform] != requestedWave) {
+            st[\waveform] = requestedWave;
+            st[\waveLevel] = wave[\level];
+            st[\synth].set(\waveMix, wave[\mix], \waveWidth, wave[\width], \waveLevel, wave[\level]);
         };
     };
     run[\output].set(\master, ~spectrumSafe.value(c[\masterGain], 1));
@@ -198,15 +223,16 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 ~spectrumStatus = {
     var run = ~spectrumRun;
     if(run.isNil) { "Spectrum stopped".postln } {
-        "Spectrum running=% leaseSent=% mode=% master=% physicalGain=% significanceGain=% rejected=% ignored=% awaiting=% incomplete=% complete=%".format(
-            run[\running], run[\subscribed], ~spectrumConfig[\mode], ~spectrumConfig[\masterGain],
+        "Spectrum running=% leaseSent=% mode=% baseNote=% pitchSpan=% master=% physicalGain=% significanceGain=% rejected=% ignored=% awaiting=% incomplete=% complete=%".format(
+            run[\running], run[\subscribed], ~spectrumConfig[\mode],
+            ~spectrumConfig[\baseNote], ~spectrumConfig[\pitchSpan], ~spectrumConfig[\masterGain],
             ~spectrumConfig[\physicalGain], ~spectrumConfig[\significanceGain], run[\rejected], run[\ignored],
             run[\streams].values.sum { |st| st[\pending].size }, run[\incomplete], run[\completed]).postln;
         run[\streams].values.do { |st|
             var rows = st[\rows], mags = rows.collect { |r| r[1] }, sig = rows.collect(~spectrumSignificance).reject(_.isNil);
-            "% frame=% age=%s scales=% backgrounds=% state=% muted=% factor=% gain=%".format(st[\signal], st[\frame],
+            "% frame=% age=%s scales=% backgrounds=% state=% muted=% waveform=% factor=% gain=%".format(st[\signal], st[\frame],
                 (Main.elapsedTime - st[\seen]).round(0.1), rows.size, sig.size, st[\reason], st[\muted],
-                ~spectrumFactor.value(st[\signal]), ~spectrumConfig[(st[\signal].asString ++ "Gain").asSymbol]).postln;
+                st[\waveform], ~spectrumFactor.value(st[\signal]), ~spectrumConfig[(st[\signal].asString ++ "Gain").asSymbol]).postln;
             if(rows.notEmpty) { "  raw=[%, %] strongestHz=% significance=[%, %] sourceUs=% epoch=%".format(
                 mags.minItem, mags.maxItem, rows[mags.maxIndex][0], sig.minItem, sig.maxItem, st[\timestamp], st[\epoch]).postln };
         };
@@ -228,6 +254,23 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
     } { "Boot the audio server before running ~spectrumTestTone.value.".warn };
 };
 ~spectrumSetMode = { |mode| if([\physical, \significance].includes(mode)) { ~spectrumConfig[\mode] = mode } { "Unknown mode".warn } };
+~spectrumSetBaseNote = { |note|
+    if(~spectrumFinite.value(note) and: { note >= 24 } and: { note <= 72 }) {
+        ~spectrumConfig[\baseNote] = note.asFloat;
+    } { "Invalid base note (allowed MIDI 24..72).".warn };
+};
+~spectrumSetPitchSpan = { |semitones|
+    if(~spectrumFinite.value(semitones) and: { semitones >= 12 } and: { semitones <= 72 }) {
+        ~spectrumConfig[\pitchSpan] = semitones.asFloat;
+    } { "Invalid pitch span (allowed 12..72 semitones).".warn };
+};
+~spectrumSetWaveform = { |signal, waveform|
+    if([\temperature, \humidity, \pressure].includes(signal).not) { "Unknown sensor bank".warn } {
+        if(~spectrumWaveControls.value(waveform).isNil) { "Unknown waveform (use sine, triangle, or saw).".warn } {
+            ~spectrumConfig[(signal.asString ++ "Waveform").asSymbol] = waveform;
+        };
+    };
+};
 ~spectrumSetGain = { |signal, gain|
     if([\temperature, \humidity, \pressure].includes(signal) and: { ~spectrumFinite.value(gain) } and: { gain >= 0 } and: { gain <= 100 }) {
         ~spectrumConfig[(signal.asString ++ "Gain").asSymbol] = gain;
@@ -268,7 +311,7 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
         [\temperature, \humidity, \pressure].do { |signal|
             run[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] = (signal: signal, ready: false,
                 muted: false, reason: "waiting", rows: [], frame: 0, seen: Main.elapsedTime,
-                pending: Dictionary.new, retired: List.new);
+                pending: Dictionary.new, retired: List.new, waveform: nil, waveLevel: 1.0);
         };
         run[\onStop] = { if(~spectrumRun === run) { ~spectrumStop.value(true) } };
         run[\onQuit] = { |server| if(server === s) { run[\onStop].value } };

@@ -1,7 +1,7 @@
 # Live CWT spectrum instrument
 
 `live-spectrum.scd` renders the 48 CWT scales for indoor temperature, relative
-humidity, and pressure as three persistent sine-oscillator banks. Stop
+humidity, and pressure as three persistent oscillator banks. Stop
 `live-cwt.scd` first: both sketches use the same native OSC lease for the sender IP
 and UDP port, so either sketch's unsubscribe would release that shared lease.
 
@@ -13,6 +13,11 @@ controls are:
 ~spectrumStop.value;                 // fades, unsubscribes, then frees resources
 ~spectrumSetMode.value(\physical);
 ~spectrumSetMode.value(\significance);
+~spectrumSetBaseNote.value(48);      // MIDI-note coordinate, continuous playback
+~spectrumSetPitchSpan.value(36);     // semitones across 0.05..1 environmental Hz
+~spectrumSetWaveform.value(\temperature, \sine);
+~spectrumSetWaveform.value(\humidity, \triangle);
+~spectrumSetWaveform.value(\pressure, \saw);
 ~spectrumSetGain.value(\temperature, 1.0);
 ~spectrumSetGain.value(\humidity, 1.0);
 ~spectrumSetGain.value(\pressure, 1.0);
@@ -27,6 +32,52 @@ To reload after editing, run `~spectrumStop.value`, wait for “Spectrum stopped
 then evaluate the whole file again. `Cmd-.` performs immediate cleanup. Production
 defaults receive on UDP 9000 and register with `192.168.0.41:5005`; a heartbeat
 refreshes the lease every ten seconds and stop sends `/router/unsubscribe 9000`.
+
+## Pitch and waveform controls
+
+The pitch mapping follows Electric Sea's resident interface in
+`router/resident-live.js`, specifically `mappedMidiValues`,
+`mappedAudioFrequency`, and the `base-octave` and `span` inputs. Electric Sea offers
+base octaves 1–5 (default 3) and spans of 1–6 octaves (default 3). Weather Music
+expresses the same ranges as MIDI coordinates: `baseNote` accepts 24–72 and
+`pitchSpan` accepts 12–72 semitones. Defaults 48 and 36 preserve C3–C6. Values may
+be fractional and playback is never rounded to MIDI notes.
+
+```text
+fraction = log2(clamp(environmentalHz, 0.05, 1) / 0.05) / log2(20)
+midi      = baseNote + pitchSpan * fraction
+audioHz   = 440 * 2^((midi - 69) / 12)
+```
+
+For example, these move the lowest scale to C4 and compress the bank to two
+octaves, immediately and without touching OSC state:
+
+```supercollider
+~spectrumSetBaseNote.value(60);
+~spectrumSetPitchSpan.value(24);
+```
+
+Each bank independently selects `\sine`, `\triangle`, or `\saw`. A bank keeps its
+48 synth voices allocated. Its SynthDef continuously runs a sine source and one
+band-limited `VarSaw` source per scale; an 80 ms equal-power crossfade selects sine
+or the variable-width triangle/saw source. Pitch retains its existing 200 ms
+smoothing, so live pitch edits do not retrigger oscillators.
+
+Fixed waveform compensation is deliberately conservative: sine is 1.0, triangle
+is 0.8, and saw is 0.55. These are approximate perceptual adjustments rather than
+peak or frame normalization: triangle and especially saw contain upper harmonics
+that sound louder than a sine at the same peak. Every CWT scale within a bank gets
+the same factor, preserving its spectral relationships. The amplitude ceiling and
+final 0.8 limiter remain active, including when all banks use saw.
+
+This architecture adds one continuously running `VarSaw` per scale: 144 additional
+oscillators across three full banks, for 288 oscillator UGens total. It avoids the
+432 oscillators required to run separate sine, triangle, and saw sources. The muted
+native suite at 48 kHz reported 7.02% average and 11.64% peak server CPU on the
+development Apple M1 Pro while all three banks were allocated (1,099 total UGens,
+including controls, smoothing, mixing, and output safety). This is a local snapshot,
+not an installation-machine benchmark; check `avgCPU`/`peakCPU` in the SuperCollider
+server meter before sustained use on lower-power hardware.
 
 ## Amplitude modes
 
@@ -87,8 +138,10 @@ On macOS, from this repository:
 The fixture uses loopback UDP 19000, never registers with the Pi, and keeps master
 gain at zero. It exercises real native OSC decoding, two-chunk frames in reverse
 order, duplicates, malformed packets, metadata conflicts, pending expiry, epoch
-changes, invalidation, timeout, both amplitude modes, gain/mute controls, persistent
-synth nodes, heartbeat, and start/stop/restart cleanup.
+changes, invalidation, timeout, both amplitude modes, live pitch endpoints and
+bounds, independent waveform selection and compensation, worst-case target
+clamping, gain/mute controls, persistent synth nodes, heartbeat, and
+start/stop/restart cleanup.
 
 For Windows, stop the old sketch, evaluate `~cwtStop.value` if it is loaded, then
 evaluate all of `live-spectrum.scd`. Within a few analysis cycles:
