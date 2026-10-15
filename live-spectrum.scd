@@ -2,15 +2,50 @@
    has one native lease per sender IP, not independent leases per sketch. */
 (
 if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before reloading").throw };
+
+// One native router lease is shared by every Weather Music sketch in this sclang.
+if(~weatherLeaseAcquire.isNil) {
+    ~weatherLeaseState = Dictionary.new;
+    ~weatherLeaseAcquire = { |owner, router, port|
+        var key = router.ip ++ ":" ++ router.port ++ ":" ++ port, entry = ~weatherLeaseState[key];
+        if(entry.isNil) { entry = (router: router, port: port, owners: Set.new, heartbeat: nil); ~weatherLeaseState[key] = entry };
+        entry[\owners].add(owner); entry[\router].sendMsg('/router/subscribe', port);
+        if(entry[\heartbeat].isNil) {
+            entry[\heartbeat] = Routine({ loop { 10.wait; if(entry[\owners].notEmpty) { entry[\router].sendMsg('/router/heartbeat', port) } } }).play(SystemClock);
+        };
+        key
+    };
+    ~weatherLeaseRelease = { |owner, key|
+        var entry = ~weatherLeaseState[key];
+        if(entry.notNil) {
+            entry[\owners].remove(owner);
+            if(entry[\owners].isEmpty) {
+                entry[\heartbeat].tryPerform(\stop); entry[\router].sendMsg('/router/unsubscribe', entry[\port]);
+                ~weatherLeaseState.removeAt(key);
+            };
+        };
+    };
+    ~weatherResolveOutputBus = { |requested, fallback=0, label="Weather Music"|
+        var channels = s.options.numOutputBusChannels;
+        if(requested.isInteger and: { requested >= 0 } and: { (requested + 1) < channels }) { requested } {
+            if(fallback.isInteger and: { fallback >= 0 } and: { (fallback + 1) < channels }) {
+                "% output bus % needs hardware channels %–%; device has % outputs. Using explicit fallback bus %."
+                    .format(label, requested, requested + 1, requested + 2, channels, fallback).warn; fallback
+            } { "% has no valid stereo output on this %‑channel device.".format(label, channels).warn; nil };
+        }
+    };
+};
 ~spectrumConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
     mode: \physical, referenceTempC: 20, referenceRH: 50, referencePressureHpa: 1013.25,
     baseNote: 48.0, pitchSpan: 36.0,
+    baseNoteOverrides: Dictionary.new, pitchSpanOverrides: Dictionary.new,
     temperatureWaveform: \sine, humidityWaveform: \sine, pressureWaveform: \sine,
     temperatureGain: 1.0, humidityGain: 1.0, pressureGain: 1.0,
     physicalGain: 0.1, significanceGain: 0.002, masterGain: 0.1,
     amplitudeCeiling: 0.02, smoothingSeconds: 2.0, staleTimeoutSeconds: 15.0,
     pendingTimeoutSeconds: 3.0, maxPendingFrames: 4, maxScales: 256,
+    outputBus: 2, fallbackOutputBus: 0,
     diagnosticsSeconds: 10.0, rejectDiagnostics: true, rejectDiagnosticSeconds: 5.0,
     shutdownSeconds: 2.0
 );
@@ -18,9 +53,11 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 // OSC strings arrive as Symbols in SuperCollider 3.14's native decoder.
 ~spectrumText = { |v| v.isString or: { v.isKindOf(Symbol) } };
 ~spectrumSafe = { |v, maximum=100| if(~spectrumFinite.value(v)) { v.clip(0, maximum) } { 0 } };
-~spectrumPitch = { |hz, config|
+~spectrumPitch = { |hz, config, signal|
     var c = config ? ~spectrumConfig;
-    (c[\baseNote] + (c[\pitchSpan] * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))).midicps
+    var base = c[\baseNoteOverrides][signal] ? c[\baseNote];
+    var span = c[\pitchSpanOverrides][signal] ? c[\pitchSpan];
+    (base + (span * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))).midicps
 };
 ~spectrumWaveControls = { |waveform|
     switch(waveform,
@@ -54,12 +91,12 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
     // Lag time is the time to settle to 0.1%, not an exponential time constant.
     Out.ar(out, Mix(waveform * Lag.kr(amps, smoothing.max(0.02))));
 });
-~spectrumOutputDef = SynthDef(\weatherSpectrumOutput, { |bus=0, master=0, gate=1, release=2|
+~spectrumOutputDef = SynthDef(\weatherSpectrumOutput, { |bus=0, out=0, master=0, gate=1, release=2|
     var input = In.ar(bus, 1) * Lag.kr(master, 0.2);
     var env = EnvGen.kr(Env.asr(0.05, 1, release), gate, doneAction: 2);
     var peak = Amplitude.kr(input, 0.001, 0.1);
     SendReply.kr(Impulse.kr(1) * (peak > 0.8), '/weatherSpectrum/limiting', [peak]);
-    Out.ar(0, (Limiter.ar(input, 0.8, 0.01) * env) ! 2);
+    Out.ar(out, (Limiter.ar(input, 0.8, 0.01) * env) ! 2);
 });
 
 ~spectrumUpdate = { |run|
@@ -78,7 +115,7 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
                 };
                 var target = converted * gain * modeGain;
                 var ceiling = ~spectrumSafe.value(c[\amplitudeCeiling], 0.1);
-                freqs[i] = ~spectrumPitch.value(row[0], c);
+                freqs[i] = ~spectrumPitch.value(row[0], c, st[\signal]);
                 if(~spectrumFinite.value(target).not or: { target < 0 } or: { target > ceiling }) { clamps = clamps + 1 };
                 amps[i] = ~spectrumSafe.value(target, ceiling);
             };
@@ -223,9 +260,9 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
 ~spectrumStatus = {
     var run = ~spectrumRun;
     if(run.isNil) { "Spectrum stopped".postln } {
-        "Spectrum running=% leaseSent=% mode=% baseNote=% pitchSpan=% master=% physicalGain=% significanceGain=% rejected=% ignored=% awaiting=% incomplete=% complete=%".format(
+        "Spectrum running=% leaseSent=% mode=% baseNote=% pitchSpan=% outputBus=% master=% physicalGain=% significanceGain=% rejected=% ignored=% awaiting=% incomplete=% complete=%".format(
             run[\running], run[\subscribed], ~spectrumConfig[\mode],
-            ~spectrumConfig[\baseNote], ~spectrumConfig[\pitchSpan], ~spectrumConfig[\masterGain],
+            ~spectrumConfig[\baseNote], ~spectrumConfig[\pitchSpan], run[\activeOutputBus], ~spectrumConfig[\masterGain],
             ~spectrumConfig[\physicalGain], ~spectrumConfig[\significanceGain], run[\rejected], run[\ignored],
             run[\streams].values.sum { |st| st[\pending].size }, run[\incomplete], run[\completed]).postln;
         run[\streams].values.do { |st|
@@ -254,15 +291,23 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
     } { "Boot the audio server before running ~spectrumTestTone.value.".warn };
 };
 ~spectrumSetMode = { |mode| if([\physical, \significance].includes(mode)) { ~spectrumConfig[\mode] = mode } { "Unknown mode".warn } };
-~spectrumSetBaseNote = { |note|
-    if(~spectrumFinite.value(note) and: { note >= 24 } and: { note <= 72 }) {
-        ~spectrumConfig[\baseNote] = note.asFloat;
-    } { "Invalid base note (allowed MIDI 24..72).".warn };
+~spectrumSetBaseNote = { |note, signal|
+    if(signal.notNil and: { [\temperature, \humidity, \pressure].includes(signal).not }) { "Unknown spectrum pitch-override sensor.".warn } {
+        if(note.isNil and: { signal.notNil }) { ~spectrumConfig[\baseNoteOverrides].removeAt(signal) } {
+            if(~spectrumFinite.value(note) and: { note >= 24 } and: { note <= 72 }) {
+                if(signal.isNil) { ~spectrumConfig[\baseNote] = note.asFloat } { ~spectrumConfig[\baseNoteOverrides][signal] = note.asFloat };
+            } { "Invalid base note (allowed MIDI 24..72; nil clears a sensor override).".warn };
+        };
+    };
 };
-~spectrumSetPitchSpan = { |semitones|
-    if(~spectrumFinite.value(semitones) and: { semitones >= 12 } and: { semitones <= 72 }) {
-        ~spectrumConfig[\pitchSpan] = semitones.asFloat;
-    } { "Invalid pitch span (allowed 12..72 semitones).".warn };
+~spectrumSetPitchSpan = { |semitones, signal|
+    if(signal.notNil and: { [\temperature, \humidity, \pressure].includes(signal).not }) { "Unknown spectrum pitch-override sensor.".warn } {
+        if(semitones.isNil and: { signal.notNil }) { ~spectrumConfig[\pitchSpanOverrides].removeAt(signal) } {
+            if(~spectrumFinite.value(semitones) and: { semitones >= 12 } and: { semitones <= 72 }) {
+                if(signal.isNil) { ~spectrumConfig[\pitchSpan] = semitones.asFloat } { ~spectrumConfig[\pitchSpanOverrides][signal] = semitones.asFloat };
+            } { "Invalid pitch span (allowed 12..72 semitones; nil clears a sensor override).".warn };
+        };
+    };
 };
 ~spectrumSetWaveform = { |signal, waveform|
     if([\temperature, \humidity, \pressure].includes(signal).not) { "Unknown sensor bank".warn } {
@@ -280,14 +325,24 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
     var st = if(~spectrumRun.notNil) { ~spectrumRun[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] };
     if(st.notNil) { st[\muted] = mute == true };
 };
+~spectrumSetOutputBus = { |bus|
+    var run = ~spectrumRun, resolved;
+    if(bus.isInteger and: { bus >= 0 }) {
+        ~spectrumConfig[\outputBus] = bus;
+        if(run.notNil and: { s.serverRunning }) {
+            resolved = ~weatherResolveOutputBus.value(bus, ~spectrumConfig[\fallbackOutputBus], "Full spectrum");
+            if(resolved.notNil) { run[\activeOutputBus] = resolved; run[\output].set(\out, resolved) };
+        };
+    } { "Invalid spectrum output bus (use a nonnegative integer).".warn };
+};
 ~spectrumStop = { |immediate=false|
     var run = ~spectrumRun;
     if(run.notNil and: { run[\running] }) {
         var finish;
         run[\running] = false;
-        if(run[\subscribed]) { run[\router].sendMsg('/router/unsubscribe', run[\port]); run[\subscribed] = false };
+        if(run[\subscribed]) { ~weatherLeaseRelease.value(\spectrum, run[\leaseKey]); run[\subscribed] = false };
         if(run[\receiver].notNil) { thisProcess.removeOSCRecvFunc(run[\receiver]) };
-        [\startup, \heartbeat, \tick].do { |key| if(run[key] !== thisThread) { run[key].tryPerform(\stop) } };
+        [\startup, \tick].do { |key| if(run[key] !== thisThread) { run[key].tryPerform(\stop) } };
         CmdPeriod.remove(run[\onStop]); ServerQuit.remove(run[\onQuit]);
         finish = {
             run[\group].tryPerform(\free); run[\bus].tryPerform(\free);
@@ -320,28 +375,34 @@ if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before relo
         s.waitForBoot({
             if(run[\running]) {
                 run[\startup] = Routine({
+                    var resolved;
                     ~spectrumBankDef.send(s); ~spectrumOutputDef.send(s); s.sync;
                     if(run[\running]) {
+                        resolved = ~weatherResolveOutputBus.value(c[\outputBus], c[\fallbackOutputBus], "Full spectrum");
+                        if(resolved.isNil) { "Cannot start spectrum without a valid stereo output.".warn; ~spectrumStop.value(true) } {
                         if(thisProcess.openUDPPort(run[\port])) {
+                            run[\activeOutputBus] = resolved;
                             run[\bus] = Bus.audio(s, 1); run[\group] = Group.new(s);
                             run[\streams].values.do { |st| st[\synth] = Synth.tail(run[\group], \weatherSpectrumBank, [\out, run[\bus]]) };
-                            run[\output] = Synth.tail(run[\group], \weatherSpectrumOutput, [\bus, run[\bus], \master, 0]);
+                            run[\output] = Synth.tail(run[\group], \weatherSpectrumOutput,
+                                [\bus, run[\bus], \out, resolved, \master, 0]);
                             run[\receiver] = { |msg, time, sender, port|
                                 if(msg[0] == '/weatherSpectrum/limiting' and: { sender == s.addr }
                                     and: { msg[1] == run[\output].nodeID }) { "Spectrum limiter active: reduce gains".warn };
                                 ~spectrumReceive.value(run, msg, sender, port);
                             };
                             thisProcess.addOSCRecvFunc(run[\receiver]);
-                            run[\router].sendMsg('/router/subscribe', run[\port]); run[\subscribed] = true;
-                            run[\heartbeat] = Routine({ loop { 10.wait; run[\router].sendMsg('/router/heartbeat', run[\port]) } }).play(SystemClock);
+                            run[\leaseKey] = ~weatherLeaseAcquire.value(\spectrum, run[\router], run[\port]); run[\subscribed] = true;
                             run[\tick] = Routine({ loop {
                                 ~spectrumSweep.value(run); ~spectrumUpdate.value(run);
                                 if((Main.elapsedTime - run[\lastDiagnostic]) >= c[\diagnosticsSeconds]) {
                                     ~spectrumStatus.value; run[\lastDiagnostic] = Main.elapsedTime;
                                 }; 0.25.wait;
                             } }).play(SystemClock);
-                            "Spectrum subscribed: %:% -> UDP %; awaiting complete frames.".format(c[\routerIP], c[\routerPort], run[\port]).postln;
+                            "Spectrum subscribed: %:% -> UDP %, hardware outputs %–%; awaiting complete frames."
+                                .format(c[\routerIP], c[\routerPort], run[\port], resolved + 1, resolved + 2).postln;
                         } { "Cannot open spectrum UDP port".warn; ~spectrumStop.value(true) };
+                        };
                     };
                 }).play(SystemClock);
             };

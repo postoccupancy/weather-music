@@ -29,6 +29,7 @@ Routine({
     check.value(~spectrumRun[\receiver].notNil, "started");
     run = ~spectrumRun; st = run[\streams]["/osc/indoor-sky/temperature/cwt/spectrum"]; node = st[\synth].nodeID;
     0.2.wait; check.value(controls.includesEqual("/router/subscribe"), "UDP subscription");
+    check.value(run[\activeOutputBus] == 0, "default bus 2 warns and falls back on stereo device");
     dest.sendMsg(*packet.value(1, 35, 13)); 0.1.wait; check.value(st[\ready].not, "incomplete silent");
     dest.sendMsg(*packet.value(1)); 0.4.wait;
     check.value(st[\ready] and: { st[\rows].size == 48 }, "reverse chunk reassembly");
@@ -44,6 +45,11 @@ Routine({
     before = ~spectrumConfig[\pitchSpan]; ~spectrumSetPitchSpan.value(73);
     check.value(~spectrumConfig[\pitchSpan] == before, "out-of-range pitch span rejected");
     ~spectrumSetBaseNote.value(48); ~spectrumSetPitchSpan.value(36); 0.4.wait;
+    ~spectrumSetBaseNote.value(60, \temperature); ~spectrumSetPitchSpan.value(24, \temperature); 0.4.wait;
+    check.value((st[\frequencies][47] - 60.midicps).abs < 0.001
+        and: { (st[\frequencies][0] - 84.midicps).abs < 0.001 }, "spectrum sensor pitch overrides");
+    ~spectrumSetBaseNote.value(nil, \temperature); ~spectrumSetPitchSpan.value(nil, \temperature); 0.4.wait;
+    check.value((st[\frequencies][47] - 48.midicps).abs < 0.001, "spectrum overrides clear to global");
     ~spectrumSetWaveform.value(\temperature, \triangle); 0.3.wait; s.sync;
     check.value(st[\waveform] == \triangle and: { st[\waveLevel] == 0.8 }, "temperature triangle");
     check.value(run[\streams]["/osc/indoor-sky/humidity/cwt/spectrum"][\waveform] == \sine, "waveform is bank-local");

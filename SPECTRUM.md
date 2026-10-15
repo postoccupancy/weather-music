@@ -1,9 +1,9 @@
 # Live CWT spectrum instrument
 
 `live-spectrum.scd` renders the 48 CWT scales for indoor temperature, relative
-humidity, and pressure as three persistent oscillator banks. Stop
-`live-cwt.scd` first: both sketches use the same native OSC lease for the sender IP
-and UDP port, so either sketch's unsubscribe would release that shared lease.
+humidity, and pressure as three persistent oscillator banks. It can run alongside
+`live-cwt.scd`; both sketches reference-count one native OSC lease, and stopping one
+keeps the lease alive until the other stops.
 
 Evaluate the entire `live-spectrum.scd` file. It starts automatically. The public
 controls are:
@@ -15,6 +15,8 @@ controls are:
 ~spectrumSetMode.value(\significance);
 ~spectrumSetBaseNote.value(48);      // MIDI-note coordinate, continuous playback
 ~spectrumSetPitchSpan.value(36);     // semitones across 0.05..1 environmental Hz
+~spectrumSetBaseNote.value(60, \temperature); // optional sensor override
+~spectrumSetBaseNote.value(nil, \temperature);// clear sensor override
 ~spectrumSetWaveform.value(\temperature, \sine);
 ~spectrumSetWaveform.value(\humidity, \triangle);
 ~spectrumSetWaveform.value(\pressure, \saw);
@@ -26,6 +28,7 @@ controls are:
 ~spectrumStatus.value;
 ~spectrumInspect.value(\temperature, 0);
 ~spectrumTestTone.value;             // quiet 440 Hz test, independent of OSC
+~spectrumSetOutputBus.value(2);      // zero-based hardware outputs 3–4
 ```
 
 To reload after editing, run `~spectrumStop.value`, wait for “Spectrum stopped,”
@@ -41,7 +44,8 @@ The pitch mapping follows Electric Sea's resident interface in
 base octaves 1–5 (default 3) and spans of 1–6 octaves (default 3). Weather Music
 expresses the same ranges as MIDI coordinates: `baseNote` accepts 24–72 and
 `pitchSpan` accepts 12–72 semitones. Defaults 48 and 36 preserve C3–C6. Values may
-be fractional and playback is never rounded to MIDI notes.
+be fractional and playback is never rounded to MIDI notes. An optional sensor
+argument installs an override; passing `nil` with that sensor clears the override.
 
 ```text
 fraction = log2(clamp(environmentalHz, 0.05, 1) / 0.05) / log2(20)
@@ -78,6 +82,11 @@ development Apple M1 Pro while all three banks were allocated (1,099 total UGens
 including controls, smoothing, mixing, and output safety). This is a local snapshot,
 not an installation-machine benchmark; check `avgCPU`/`peakCPU` in the SuperCollider
 server meter before sustained use on lower-power hardware.
+
+The limiter, master gain, and shutdown envelope run before the selected hardware
+output. Spectrum defaults to bus 2 (physical outputs 3–4). If the booted server has
+only two outputs, startup warns and uses configured fallback bus 0 rather than
+writing silently to nonexistent outputs. See [multichannel routing](ROUTING.md).
 
 ## Amplitude modes
 

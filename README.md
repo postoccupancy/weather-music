@@ -1,11 +1,12 @@
 # Live CWT sine sketch
 
-For the separate full 48-scale temperature, humidity, and pressure instrument, see
-[SPECTRUM.md](SPECTRUM.md). It uses `live-spectrum.scd`; stop this tracked-voice
-sketch before starting it because both share one native router lease.
+For the full 48-scale temperature, humidity, and pressure instrument, see
+[SPECTRUM.md](SPECTRUM.md). `live-cwt.scd` and `live-spectrum.scd` may run together:
+they share one reference-counted native router lease and keep independent OSC
+handlers, synthesis groups, gains, and hardware output routes.
 
 `live-cwt.scd` is a native SuperCollider client for Electric Sea. It registers with
-`192.168.0.41:5005`, receives OSC on UDP 9000, and plays at most four sine oscillators
+`192.168.0.41:5005`, receives OSC on UDP 9000, and plays at most four oscillators
 (including release tails). No intermediary or Electric Sea changes are needed.
 
 ## Start and stop
@@ -19,17 +20,16 @@ sketch before starting it because both share one native router lease.
 3. Look for `CWT running`. Ready active voices should appear in diagnostics within
    five seconds of the router's snapshot. Defaults are the browser's continuous
    pitch mapping and volume 0.8. No clicks or MIDI permissions are required.
-4. Evaluate `~cwtStop.value;` to unsubscribe and immediately free this sketch's
-   group, synths, receive callback, heartbeat and update routines. Command-period
-   also cleans up. The shared audio server remains available to other sketches.
+4. Evaluate `~cwtStop.value;` to release this sketch's lease ownership and free its
+   group, synths, receive callback and update routine. The router is unsubscribed
+   only when the last Weather Music owner stops. Command-period also cleans up.
 5. Evaluate `~cwtStart.value;` to restart, or re-evaluate the whole file. Re-evaluation
    stops the previous instance before installing another one. It resets controls.
 
 SuperCollider's installed Main API opens additional UDP ports for the lifetime of
-sclang and has no closeUDPPort method. Stop removes the callback and subscription;
-9000 remains language-owned and is reused on restart. Quit/restart the language to
-release the socket to another application. Do not run two native clients on the
-same IP and port: the router lease is per destination, so either can unsubscribe it.
+sclang and has no closeUDPPort method. Stop removes this sketch's callback and lease
+ownership; 9000 remains language-owned and is reused on restart. Quit/restart the
+language to release the socket to another application.
 
 ## Controls
 
@@ -45,24 +45,37 @@ Change these live in the IDE; updates take effect on the next 100 ms control tic
 ~cwtConfig[\deviceFilter] = nil;      // all devices
 ~cwtConfig[\signalFilter] = nil;      // all signals
 ~cwtConfig[\maxPolyphony] = 4;        // nonnegative integer
+~cwtSetMinConfidence.value(0.85);     // 0..1; default 0
+~cwtSetBaseNote.value(48);            // MIDI coordinate 24..72
+~cwtSetPitchSpan.value(36);           // semitones 12..72
+~cwtSetWaveform.value(\triangle);     // sine, triangle, saw
+~cwtSetGain.value(\temperature, 1.0); // 0..4
+~cwtMute.value(\temperature, true);   // smooth silence; selection retained
+~cwtSetOutputBus.value(0);            // zero-based hardware outputs 1–2
 ~cwtConfig[\frequencySmoothing] = 0.18; // exponential time constant, seconds
 ~cwtConfig[\amplitudeSmoothing] = 0.35;
 ```
 
-Other controls: `baseOctave` (3), `pitchSpan` (3 octaves), `releaseSmoothing` (0.6 s),
+Other controls: `baseNote` (48), `pitchSpan` (36 semitones), `releaseSmoothing` (0.6 s),
 `releaseSeconds` (2.5 s), `trafficTimeout` (15 s), `diagnosticsInterval` (5 s).
 Use positive smoothing/timeout settings. Release settings apply to newly created
-synths. Lowering polyphony releases excess synths before their slots are reused;
+synths. Confidence filtering occurs before ranked polyphony selection. Lowering
+polyphony or raising the threshold releases excess synths before their slots are reused;
 the old tails can persist for 2.5 seconds. Raising the cap above four explicitly
-changes the instrument's default limit. Volume is not automatically limited.
+changes the instrument's default limit. A summed stereo limiter catches exceptional
+peaks after the existing per-voice envelopes and master gain.
 
 Stop/start after changing `routerIP`, `routerPort` or `localPort`. The existing
 router accepts **only localPort 9000** despite exposing this setting for future
 routers/testing. A LAN or Tailscale IPv4 address works; use the address reachable
 from this Mac. Allow inbound UDP 9000 and outbound UDP 5005. The router's UDP output
 source port is ephemeral: the client filters the sender IP, not its source port.
-Registration occurs after audio startup and handlers are installed. A native OSC
+Registration occurs after audio startup and handlers are installed. One shared OSC
 heartbeat every ten seconds renews the 30-second lease and obtains a fresh snapshot.
+
+Tracked voices default to hardware bus 0 (outputs 1–2). Spectrum defaults to bus 2
+(outputs 3–4). See [multichannel routing](ROUTING.md) for BlackHole/Ableton setup,
+stereo fallback behavior, monitoring, and hardware limitations.
 
 ## Behavior and diagnostics
 
@@ -70,7 +83,9 @@ The full `device/signal/id` is the dictionary key. Repeated updates set existing
 synth controls; they do not retrigger oscillators. Selection prioritizes confidence,
 then incumbent synths on ties, then lexicographic full identity. Higher-confidence
 voices can displace incumbents. New voices wait for outgoing release tails to finish,
-so a steal never temporarily exceeds the cap. Selection is separate from mapping.
+so a steal never temporarily exceeds the cap. Per-sensor mute drives selected voice
+amplitudes smoothly to zero without changing selection or tracker state. Diagnostics
+report eligible, selected, releasing, and allocated counts separately.
 
 The sketch waits for a ready authoritative list before sounding a stream. Inactive
 packets, missing IDs, unready lists and 15 seconds without stream/voice traffic
@@ -96,9 +111,11 @@ With SuperCollider installed, run the native local fixture test:
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/live-cwt-test.scd
 ```
 
-It boots local audio **muted**, uses loopback OSC on 9000/50055 (no Pi subscription),
-and tests mapping, selection, node continuity, release, readiness, ID reuse,
-heartbeat, timeout and repeated cleanup. Run it without another client owning 9000.
+It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi
+subscription), and tests mapping, confidence/polyphony selection, sensor gain/mute,
+waveforms, output fallback, node continuity, release, readiness, ID reuse,
+heartbeat, timeout and repeated cleanup. `tests/live-concurrent-test.scd` verifies
+both instruments share a lease and that stopping one does not unsubscribe the other.
 For an audible check in the IDE, start the sketch normally, switch between
 `continuous` and `midi`, and confirm gliding/quantized pitches without node restarts.
 Check `~cwtRun[\synths].size` (at most four by default), then stop and confirm silence.
