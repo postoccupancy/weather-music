@@ -75,3 +75,39 @@ The automated tests verified bus validation, warned stereo fallback, distinct
 instrument output synths, shared concurrent OSC lease ownership, and limiter
 placement. The BlackHole 16ch and UMC1820 channel layouts still require manual
 verification on the user's selected hardware and Ableton configuration.
+
+## Recovering after source or SynthDef changes
+
+An existing server-side synth keeps the SynthDef version from which it was created.
+Likewise, evaluating `live-spectrum.scd` while an old spectrum is running stops at
+the reload guard before replacing language-side functions. Use this sequence after
+updating either instrument:
+
+```supercollider
+~cwtStop.value;
+~spectrumStop.value(true);
+s.quit;
+s.options.outDevice = "BlackHole 16ch";
+s.options.numInputBusChannels = 0;
+s.options.numOutputBusChannels = 16;
+s.options.sampleRate = 48000;
+s.boot;
+```
+
+After the server reports ready, evaluate all of `live-cwt.scd`, then all of
+`live-spectrum.scd`. The reverse order is also supported. Then evaluate:
+
+```supercollider
+~cwtSetOutputBus.value(0);
+~spectrumSetOutputBus.value(2);
+~cwtStatus.value;
+~spectrumStatus.value;
+~spectrumAudioStatus.value;
+~spectrumTestTone.value;
+```
+
+The audio status should show `routing=ready`, `activeBus=2`, three bank synths,
+and recent output meter replies. Ready incoming data should produce nonzero targets
+and a nonzero peak. In Ableton, confirm that the “CWT Voices” track meters Ext. In
+1/2 and the “CWT Spectrum” track meters Ext. In 3/4. That final BlackHole/Ableton
+check remains hardware-dependent and is not established by the automated tests.

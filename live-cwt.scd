@@ -31,16 +31,16 @@ if(~weatherLeaseAcquire.isNil) {
             };
         };
     };
-    ~weatherResolveOutputBus = { |requested, fallback=0, label="Weather Music"|
-        var channels = s.options.numOutputBusChannels;
-        if(requested.isInteger and: { requested >= 0 } and: { (requested + 1) < channels }) { requested } {
-            if(fallback.isInteger and: { fallback >= 0 } and: { (fallback + 1) < channels }) {
-                "% output bus % needs hardware channels %–%; device has % outputs. Using explicit fallback bus %."
-                    .format(label, requested, requested + 1, requested + 2, channels, fallback).warn;
-                fallback
-            } { "% has no valid stereo output on this %‑channel device.".format(label, channels).warn; nil };
-        }
-    };
+};
+~weatherResolveOutputBus = { |requested, fallback=0, label="Weather Music"|
+    var channels = s.options.numOutputBusChannels;
+    if(requested.isInteger and: { requested >= 0 } and: { (requested + 1) < channels }) { requested } {
+        if(fallback.isInteger and: { fallback >= 0 } and: { (fallback + 1) < channels }) {
+            "% output bus % needs hardware channels %–%; device has % outputs. Using explicit fallback bus %."
+                .format(label, requested, requested + 1, requested + 2, channels, fallback).warn;
+            fallback
+        } { "% has no valid stereo output on this %‑channel device.".format(label, channels).warn; nil };
+    }
 };
 
 ~cwtConfig = (

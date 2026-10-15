@@ -26,8 +26,9 @@ controls are:
 ~spectrumMute.value(\pressure, true);
 ~spectrumMute.value(\pressure, false);
 ~spectrumStatus.value;
+~spectrumAudioStatus.value;          // routing, target amplitudes, output-stage meter
 ~spectrumInspect.value(\temperature, 0);
-~spectrumTestTone.value;             // quiet 440 Hz test, independent of OSC
+~spectrumTestTone.value;             // brief tone through the spectrum output stage
 ~spectrumSetOutputBus.value(2);      // zero-based hardware outputs 3–4
 ```
 
@@ -136,6 +137,19 @@ rate-limited warning naming its first failing field, OSC index, value, decoded
 SuperCollider class, and expected form. Source timestamps are retained for display
 but are not interpreted as UTC.
 
+`~spectrumAudioStatus.value` separately reports routing health, configured and
+active hardware buses, the private audio bus, output node, bank count, ready banks,
+nonzero amplitude targets, gains, and the latest output-stage peak. The peak is
+measured after `masterGain` and before the existing limiter. A recent zero peak with
+nonzero targets points to the bank/internal-bus path; missing meter replies point to
+a stale or inactive output synth. The command warns when no complete frames exist,
+when ready frames produce zero targets, or when routing is incomplete.
+
+`~spectrumTestTone.value` injects a quiet, self-freeing 440 Hz tone into the private
+spectrum bus immediately before the spectrum output synth. It therefore exercises
+the actual master gain, limiter, shutdown envelope, and selected hardware bus. It
+does not bypass the spectrum output stage and cannot remain sounding indefinitely.
+
 ## Tests and manual checks
 
 On macOS, from this repository:
@@ -160,7 +174,7 @@ evaluate all of `live-spectrum.scd`. Within a few analysis cycles:
 ```
 
 should show `frame` above zero, `scales=48`, `backgrounds=48`, and `state=ready` for
-active streams. Use `~spectrumTestTone.value` to verify the selected server output
-device independently. If the tone works but the banks do not, inspect one received
+active streams. Use `~spectrumTestTone.value` to verify the spectrum output path.
+If the tone works but the banks do not, inspect one received
 scale and temporarily raise a musical gain within the documented safety ceiling;
 do not change the protocol validator or limiter.

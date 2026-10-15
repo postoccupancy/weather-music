@@ -1,5 +1,5 @@
-/* Evaluate this whole file. See SPECTRUM.md. Stop live-cwt first: the router
-   has one native lease per sender IP, not independent leases per sketch. */
+/* Evaluate this whole file. See SPECTRUM.md. It shares one reference-counted
+   native router lease with live-cwt.scd, so both sketches may run together. */
 (
 if(~spectrumRun.notNil) { Error("Stop spectrum and wait for its fade before reloading").throw };
 
@@ -25,15 +25,17 @@ if(~weatherLeaseAcquire.isNil) {
             };
         };
     };
-    ~weatherResolveOutputBus = { |requested, fallback=0, label="Weather Music"|
-        var channels = s.options.numOutputBusChannels;
-        if(requested.isInteger and: { requested >= 0 } and: { (requested + 1) < channels }) { requested } {
-            if(fallback.isInteger and: { fallback >= 0 } and: { (fallback + 1) < channels }) {
-                "% output bus % needs hardware channels %–%; device has % outputs. Using explicit fallback bus %."
-                    .format(label, requested, requested + 1, requested + 2, channels, fallback).warn; fallback
-            } { "% has no valid stereo output on this %‑channel device.".format(label, channels).warn; nil };
-        }
-    };
+};
+// Refresh independently of the lease helpers. Older live sessions may already
+// have a lease function but no output resolver, depending on source load order.
+~weatherResolveOutputBus = { |requested, fallback=0, label="Weather Music"|
+    var channels = s.options.numOutputBusChannels;
+    if(requested.isInteger and: { requested >= 0 } and: { (requested + 1) < channels }) { requested } {
+        if(fallback.isInteger and: { fallback >= 0 } and: { (fallback + 1) < channels }) {
+            "% output bus % needs hardware channels %–%; device has % outputs. Using explicit fallback bus %."
+                .format(label, requested, requested + 1, requested + 2, channels, fallback).warn; fallback
+        } { "% has no valid stereo output on this %‑channel device.".format(label, channels).warn; nil };
+    }
 };
 ~spectrumConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
@@ -95,8 +97,13 @@ if(~weatherLeaseAcquire.isNil) {
     var input = In.ar(bus, 1) * Lag.kr(master, 0.2);
     var env = EnvGen.kr(Env.asr(0.05, 1, release), gate, doneAction: 2);
     var peak = Amplitude.kr(input, 0.001, 0.1);
+    SendReply.kr(Impulse.kr(2), '/weatherSpectrum/level', [peak]);
     SendReply.kr(Impulse.kr(1) * (peak > 0.8), '/weatherSpectrum/limiting', [peak]);
     Out.ar(out, (Limiter.ar(input, 0.8, 0.01) * env) ! 2);
+});
+~spectrumTestDef = SynthDef(\weatherSpectrumTest, { |out=0|
+    var env = EnvGen.kr(Env.perc(0.02, 0.8), doneAction: 2);
+    Out.ar(out, SinOsc.ar(440) * env * 0.03);
 });
 
 ~spectrumUpdate = { |run|
@@ -275,6 +282,35 @@ if(~weatherLeaseAcquire.isNil) {
         };
     };
 };
+~spectrumAudioStatus = {
+    var run = ~spectrumRun, now = Main.elapsedTime;
+    if(run.isNil) { "Spectrum audio: stopped".postln } {
+        var streams = run[\streams].values, ready = streams.count { |st| st[\ready] };
+        var audible = streams.count { |st| (st[\targets] ? []).sum > 0 };
+        var targetSum = streams.sum { |st| (st[\targets] ? []).sum };
+        var meterAge = if(run[\outputSeen].isNil) { nil } { (now - run[\outputSeen]).round(0.1) };
+        var meterHealthy = run[\outputSeen].notNil and: { (now - run[\outputSeen]) <= 2 };
+        var routeHealthy = run[\routingState] == \ready and: { run[\activeOutputBus].notNil }
+            and: { run[\bus].notNil } and: { run[\output].notNil } and: { meterHealthy };
+        "Spectrum audio: healthy=% routing=% configuredBus=% activeBus=% channels=% internalBus=% outputNode=% banks=% ready=% audibleTargets=% targetSum=% master=% peak=% meterAge=%s"
+            .format(routeHealthy, run[\routingState], ~spectrumConfig[\outputBus], run[\activeOutputBus],
+                s.options.numOutputBusChannels, run[\bus].tryPerform(\index), run[\output].tryPerform(\nodeID),
+                streams.count { |st| st[\synth].notNil }, ready, audible, targetSum.round(0.000001),
+                ~spectrumConfig[\masterGain], (run[\outputPeak] ? 0).round(0.000001), meterAge).postln;
+        streams.do { |st|
+            "  % ready=% muted=% rows=% nonzero=% gain=% state=%"
+                .format(st[\signal], st[\ready], st[\muted], st[\rows].size,
+                    (st[\targets] ? []).count { |amp| amp > 0 },
+                    ~spectrumConfig[(st[\signal].asString ++ "Gain").asSymbol], st[\reason]).postln;
+        };
+        if(routeHealthy.not) { "Spectrum audio routing is not initialized; stop, reboot if needed, and reload the sketch.".warn };
+        if(ready == 0) { "No complete ready spectrum frames.".warn };
+        if(ready > 0 and: { targetSum <= 0 }) { "Ready frames currently produce zero effective amplitudes; check mode, gains, backgrounds, and mutes.".warn };
+        if(run[\outputSeen].isNil or: { (now - run[\outputSeen]) > 2 }) {
+            "No recent output-synth meter reply; the output node may be stale or inactive.".warn;
+        };
+    };
+};
 ~spectrumInspect = { |signal=\temperature, index=0|
     var st = if(~spectrumRun.notNil) { ~spectrumRun[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] };
     if(st.notNil and: { index.isInteger } and: { index >= 0 } and: { index < st[\rows].size }) {
@@ -283,12 +319,15 @@ if(~weatherLeaseAcquire.isNil) {
             physical: row[1] * ~spectrumFactor.value(signal), significance: ~spectrumSignificance.value(row)).postln;
     } { "No such received scale".warn };
 };
-// Bypasses OSC, banks, control bus and limiter for a brief output-device check.
+// Injects a brief tone before the existing output synth, exercising its internal
+// bus, master gain, limiter, envelope, and selected hardware output.
 ~spectrumTestTone = {
-    if(s.serverRunning) {
-        { var env = EnvGen.kr(Env.perc(0.02, 0.8), doneAction: 2); (SinOsc.ar(440) * env * 0.03) ! 2 }.play(s);
-        "Playing a quiet 440 Hz output test for about one second.".postln;
-    } { "Boot the audio server before running ~spectrumTestTone.value.".warn };
+    var run = ~spectrumRun;
+    if(s.serverRunning and: { run.notNil } and: { run[\routingState] == \ready }
+        and: { run[\bus].notNil } and: { run[\output].notNil }) {
+        Synth.before(run[\output], \weatherSpectrumTest, [\out, run[\bus]]);
+        "Playing a quiet 440 Hz tone through the spectrum output stage for about one second.".postln;
+    } { "Start a fully initialized spectrum before running ~spectrumTestTone.value.".warn };
 };
 ~spectrumSetMode = { |mode| if([\physical, \significance].includes(mode)) { ~spectrumConfig[\mode] = mode } { "Unknown mode".warn } };
 ~spectrumSetBaseNote = { |note, signal|
@@ -331,7 +370,17 @@ if(~weatherLeaseAcquire.isNil) {
         ~spectrumConfig[\outputBus] = bus;
         if(run.notNil and: { s.serverRunning }) {
             resolved = ~weatherResolveOutputBus.value(bus, ~spectrumConfig[\fallbackOutputBus], "Full spectrum");
-            if(resolved.notNil) { run[\activeOutputBus] = resolved; run[\output].set(\out, resolved) };
+            if(resolved.isNil) {
+                run[\activeOutputBus] = nil; run[\routingState] = \invalid;
+            } {
+                if(run[\output].isNil) {
+                    run[\activeOutputBus] = nil; run[\routingState] = \missingOutput;
+                    "Spectrum output synth is missing; stop and restart the sketch.".warn;
+                } {
+                    run[\output].set(\out, resolved);
+                    run[\activeOutputBus] = resolved; run[\routingState] = \ready;
+                };
+            };
         };
     } { "Invalid spectrum output bus (use a nonnegative integer).".warn };
 };
@@ -361,7 +410,8 @@ if(~weatherLeaseAcquire.isNil) {
         var c = ~spectrumConfig, run;
         run = (running: true, subscribed: false, router: NetAddr(c[\routerIP], c[\routerPort]), port: c[\localPort],
             streams: Dictionary.new, rejected: 0, ignored: 0, incomplete: 0, completed: 0,
-            lastRejectDiagnostic: -100, lastClamp: -100, lastDiagnostic: Main.elapsedTime);
+            lastRejectDiagnostic: -100, lastClamp: -100, lastDiagnostic: Main.elapsedTime,
+            routingState: \initializing, activeOutputBus: nil, outputPeak: 0.0, outputSeen: nil);
         ~spectrumRun = run;
         [\temperature, \humidity, \pressure].do { |signal|
             run[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] = (signal: signal, ready: false,
@@ -376,7 +426,7 @@ if(~weatherLeaseAcquire.isNil) {
             if(run[\running]) {
                 run[\startup] = Routine({
                     var resolved;
-                    ~spectrumBankDef.send(s); ~spectrumOutputDef.send(s); s.sync;
+                    ~spectrumBankDef.send(s); ~spectrumOutputDef.send(s); ~spectrumTestDef.send(s); s.sync;
                     if(run[\running]) {
                         resolved = ~weatherResolveOutputBus.value(c[\outputBus], c[\fallbackOutputBus], "Full spectrum");
                         if(resolved.isNil) { "Cannot start spectrum without a valid stereo output.".warn; ~spectrumStop.value(true) } {
@@ -386,7 +436,12 @@ if(~weatherLeaseAcquire.isNil) {
                             run[\streams].values.do { |st| st[\synth] = Synth.tail(run[\group], \weatherSpectrumBank, [\out, run[\bus]]) };
                             run[\output] = Synth.tail(run[\group], \weatherSpectrumOutput,
                                 [\bus, run[\bus], \out, resolved, \master, 0]);
+                            run[\routingState] = \ready;
                             run[\receiver] = { |msg, time, sender, port|
+                                if(msg[0] == '/weatherSpectrum/level' and: { sender == s.addr }
+                                    and: { msg[1] == run[\output].nodeID }) {
+                                    run[\outputPeak] = msg[3]; run[\outputSeen] = Main.elapsedTime;
+                                };
                                 if(msg[0] == '/weatherSpectrum/limiting' and: { sender == s.addr }
                                     and: { msg[1] == run[\output].nodeID }) { "Spectrum limiter active: reduce gains".warn };
                                 ~spectrumReceive.value(run, msg, sender, port);

@@ -15,6 +15,7 @@ check.value(((1.0 - 1.0.floor).abs > 0).not, "frame integral");
 ~spectrumConfig[\routerIP] = "127.0.0.1"; ~spectrumConfig[\routerPort] = 50056;
 ~spectrumConfig[\localPort] = 19000; ~spectrumConfig[\masterGain] = 0; ~spectrumConfig[\diagnosticsSeconds] = 60;
 ~spectrumConfig[\shutdownSeconds] = 0.1;
+s.options.outDevice = "BlackHole 16ch"; s.options.numInputBusChannels = 0; s.options.numOutputBusChannels = 16;
 thisProcess.openUDPPort(50056);
 receiver = { |m, time, sender, port| if(port == 50056) { controls.add(m[0].asString) } };
 thisProcess.addOSCRecvFunc(receiver); dest = NetAddr("127.0.0.1", 19000);
@@ -29,11 +30,28 @@ Routine({
     check.value(~spectrumRun[\receiver].notNil, "started");
     run = ~spectrumRun; st = run[\streams]["/osc/indoor-sky/temperature/cwt/spectrum"]; node = st[\synth].nodeID;
     0.2.wait; check.value(controls.includesEqual("/router/subscribe"), "UDP subscription");
-    check.value(run[\activeOutputBus] == 0, "default bus 2 warns and falls back on stereo device");
+    check.value(run[\activeOutputBus] == 2 and: { run[\routingState] == \ready }, "16-output startup assigns spectrum bus 2");
+    check.value(run[\bus].index >= 16 and: { run[\output].notNil }
+        and: { run[\streams].values.every { |bank| bank[\synth].notNil } }, "banks feed a private bus and output synth");
+    run[\activeOutputBus] = nil; run[\routingState] = \invalid;
+    ~spectrumSetOutputBus.value(2); 0.1.wait;
+    check.value(run[\activeOutputBus] == 2 and: { run[\routingState] == \ready },
+        "live setter repairs output-synth-present/active-bus-nil regression");
+    ~spectrumSetOutputBus.value(4); 0.1.wait;
+    check.value(run[\activeOutputBus] == 4, "live output move assigns valid stereo bus");
+    ~spectrumSetOutputBus.value(20); 0.1.wait;
+    check.value(run[\activeOutputBus] == 0, "invalid live output uses explicit fallback");
+    ~spectrumSetOutputBus.value(2); 0.1.wait;
+    check.value(run[\activeOutputBus] == 2, "live output returns to bus 2");
     dest.sendMsg(*packet.value(1, 35, 13)); 0.1.wait; check.value(st[\ready].not, "incomplete silent");
     dest.sendMsg(*packet.value(1)); 0.4.wait;
     check.value(st[\ready] and: { st[\rows].size == 48 }, "reverse chunk reassembly");
     check.value((st[\targets][0] - 0.001).abs < 1e-7, "physical without normalization");
+    ~spectrumConfig[\masterGain] = 0.1; 1.2.wait;
+    check.value(run[\outputSeen].notNil and: { run[\outputPeak] > 0 }, "known spectrum produces audio at output stage");
+    ~spectrumConfig[\masterGain] = 0; 0.3.wait;
+    ~spectrumTestTone.value; 0.7.wait;
+    check.value(run[\outputPeak] > 0, "test tone traverses spectrum internal bus and output stage");
     check.value(st[\waveform] == \sine and: { st[\waveLevel] == 1.0 }, "sine default");
     ~spectrumSetBaseNote.value(60); 0.4.wait; s.sync;
     check.value((st[\frequencies][47] - 60.midicps).abs < 0.001, "live base-note low endpoint");
@@ -89,6 +107,7 @@ Routine({
     check.value(st[\targets][0] == 0 and: { st[\targets][1] == 0 } and: { st[\targets][2] > 0 }, "unavailable and zero scales");
     check.value(st[\synth].nodeID == node, "persistent nodes");
     ~spectrumStatus.value; ~spectrumInspect.value(\temperature, 2);
+    ~spectrumAudioStatus.value;
     dest.sendMsg("/osc/indoor-sky/temperature/cwt/spectrum", 3, "epoch-b", 3.0, 123.0, 0, "coverage", 0, 0, 0); 0.4.wait;
     check.value(st[\ready].not and: { st[\targets].sum == 0 }, "invalidation");
     dest.sendMsg(*packet.value(2, 0, 48, "epoch-b")); 0.1.wait; check.value(st[\ready].not, "older ignored");

@@ -3,8 +3,8 @@
 var root = thisProcess.nowExecutingPath.dirname.dirname;
 var check, controls = List.new, receiver, deadline;
 ~cwtAutoStart = false; ~spectrumAutoStart = false;
-(root +/+ "live-cwt.scd").load;
 (root +/+ "live-spectrum.scd").load;
+(root +/+ "live-cwt.scd").load;
 check = { |condition, label|
     if(condition.not) {
         ("FAIL: " ++ label).postln; ~cwtStop.value; ~spectrumStop.value(true); s.quit; 1.exit
@@ -28,6 +28,7 @@ Routine({
     check.value(lease.notNil and: { lease[\owners].includes(\cwt) }
         and: { lease[\owners].includes(\spectrum) } and: { lease[\heartbeat].notNil }, "shared lease owns both instruments and one heartbeat");
     check.value(~cwtRun[\activeOutputBus] == 0 and: { ~spectrumRun[\activeOutputBus] == 0 }, "stereo device uses explicit spectrum fallback");
+    check.value(~weatherResolveOutputBus.value(0, 0, "test") == 0, "output resolver survives spectrum-then-CWT load order");
     check.value(~cwtRun[\output].nodeID != ~spectrumRun[\output].nodeID, "instruments retain distinct output synths");
     ~cwtStop.value; 0.3.wait;
     check.value(controls.includesEqual("/router/unsubscribe").not, "stopping CWT does not unsubscribe spectrum");
