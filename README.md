@@ -5,6 +5,11 @@ For the full 48-scale temperature, humidity, and pressure instrument, see
 they share one reference-counted native router lease and keep independent OSC
 handlers, synthesis groups, gains, and hardware output routes.
 
+Open [`controls.scd`](controls.scd) beside both instrument files for the tracked
+voice, spectrum, routing, diagnostic, and lifecycle commands used during a live
+performance. Evaluate individual lines rather than the whole file; it deliberately
+includes mutually exclusive examples such as mute/unmute and stop/start.
+
 `live-cwt.scd` is a native SuperCollider client for Electric Sea. It registers with
 `192.168.0.41:5005`, receives OSC on UDP 9000, and plays at most four oscillators
 (including release tails). No intermediary or Electric Sea changes are needed.
@@ -109,6 +114,7 @@ With SuperCollider installed, run the native local fixture test:
 
 ```sh
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/live-cwt-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/controls-test.scd
 ```
 
 It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi
@@ -116,6 +122,8 @@ subscription), and tests mapping, confidence/polyphony selection, sensor gain/mu
 waveforms, output fallback, node continuity, release, readiness, ID reuse,
 heartbeat, timeout and repeated cleanup. `tests/live-concurrent-test.scd` verifies
 both instruments share a lease and that stopping one does not unsubscribe the other.
+`tests/controls-test.scd` executes the control panel against API spies to catch
+syntax errors and stale command names without starting audio or contacting the router.
 For an audible check in the IDE, start the sketch normally, switch between
 `continuous` and `midi`, and confirm gliding/quantized pitches without node restarts.
 Check `~cwtRun[\synths].size` (at most four by default), then stop and confirm silence.
