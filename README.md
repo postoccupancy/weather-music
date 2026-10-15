@@ -1,5 +1,9 @@
 # Live CWT sine sketch
 
+For the separate full 48-scale temperature, humidity, and pressure instrument, see
+[SPECTRUM.md](SPECTRUM.md). It uses `live-spectrum.scd`; stop this tracked-voice
+sketch before starting it because both share one native router lease.
+
 `live-cwt.scd` is a native SuperCollider client for Electric Sea. It registers with
 `192.168.0.41:5005`, receives OSC on UDP 9000, and plays at most four sine oscillators
 (including release tails). No intermediary or Electric Sea changes are needed.
