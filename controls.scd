@@ -8,9 +8,85 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 
 // LIFECYCLE — evaluate one line, then wait for completion before reloading
 ~cwtStop.value;
-~spectrumStop.value;                           // normal spectrum fade
+~spectrumStop.value; // normal spectrum fade
 ~cwtStart.value;
 ~spectrumStart.value;
+
+// CONFIGURE AUDIO OUTPUTS
+s.quit; // quit the audio server
+s.options.outDevice = "BlackHole 16ch";
+s.options.numInputBusChannels = 0;
+s.options.numOutputBusChannels = 16;
+s.options.sampleRate = 48000;
+s.boot;
+
+// open internal audio meter
+s.meter;
+
+// play a test tone
+~routingTest = {
+    SinOsc.ar(440, 0, 0.08) ! 2
+}.play(s, outbus: 2);
+// end tone
+~routingTest.free;
+
+// check output config
+s.options.outDevice.postln;
+s.options.numOutputBusChannels.postln;
+
+s.serverRunning.postln;
+s.options.outDevice.postln;
+s.options.numOutputBusChannels.postln;
+s.avgCPU.postln;
+
+~spectrumRun.notNil.postln;
+~spectrumRun[\running].postln;
+~spectrumRun[\output].postln;
+~spectrumRun[\activeOutputBus].postln;
+
+// full restart sequence
+~cwtStop.value;
+~spectrumStop.value(true);
+
+s.quit;
+s.options.outDevice = "BlackHole 16ch";
+s.options.numInputBusChannels = 0;
+s.options.numOutputBusChannels = 16;
+s.options.sampleRate = 48000;
+s.boot;
+
+~spectrumSetOutputBus.value(2);
+~spectrumConfig[\masterGain] = 0.1;
+
+~spectrumAudioStatus.value;
+~spectrumTestTone.value;
+
+[
+    \functionLoaded, ~spectrumAudioStatus.notNil,
+    \serverRunning, s.serverRunning,
+    \device, s.options.outDevice,
+    \channels, s.options.numOutputBusChannels,
+    \configuredBus, ~spectrumConfig[\outputBus],
+    \activeBus, ~spectrumRun[\activeOutputBus],
+    \routing, ~spectrumRun[\routingState],
+    \master, ~spectrumConfig[\masterGain],
+    \outputPeak, ~spectrumRun[\outputPeak],
+    \outputSeen, ~spectrumRun[\outputSeen]
+].postln;
+
+
+// AUDIO OUTPUT ROUTING — zero-based hardware output bus indices
+~cwtSetOutputBus.value(0); // outputs 1–2; tracked default
+~spectrumSetOutputBus.value(2); // outputs 3–4; spectrum default
+// A stereo-only device warns and uses explicit fallback bus 0 for spectrum.
+// Stop both instruments and reboot the server after changing device/channel count.
+~spectrumAudioStatus.value;
+~spectrumTestTone.value;
+
+// DIAGNOSTICS
+~cwtStatus.value;
+~spectrumStatus.value;
+~spectrumInspect.value(\temperature, 0);       // sensor and scale index
 
 // TRACKED VOICES — selection, pitch, waveform, and master
 ~cwtConfig[\maxPolyphony] = 4;               // default 4; nonnegative hard ceiling
@@ -46,9 +122,9 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 // FULL SPECTRUM — amplitude mode and global gain
 ~spectrumSetMode.value(\physical);            // default; or \significance
 ~spectrumSetMode.value(\significance);
-~spectrumConfig[\physicalGain] = 0.1;         // default 0.1
-~spectrumConfig[\significanceGain] = 0.002;   // default 0.002
-~spectrumConfig[\masterGain] = 0.1;           // default 0.1
+~spectrumConfig[\physicalGain] = 1.0;         // default 0.1
+~spectrumConfig[\significanceGain] = 1.0;   // default 0.002
+~spectrumConfig[\masterGain] = 1.0;           // default 0.1
 
 // FULL SPECTRUM — per-sensor gain and mute
 ~spectrumSetGain.value(\temperature, 1.0);    // default 1
@@ -76,17 +152,7 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 ~spectrumConfig[\smoothingSeconds] = 2.0;      // default 2 seconds
 ~spectrumConfig[\amplitudeCeiling] = 0.02;    // default per oscillator
 
-// AUDIO OUTPUT ROUTING — zero-based hardware output bus indices
-~cwtSetOutputBus.value(0);                     // outputs 1–2; tracked default
-~spectrumSetOutputBus.value(2);                // outputs 3–4; spectrum default
-// A stereo-only device warns and uses explicit fallback bus 0 for spectrum.
-// Stop both instruments and reboot the server after changing device/channel count.
-
-// DIAGNOSTICS
-~cwtStatus.value;
-~spectrumStatus.value;
-~spectrumInspect.value(\temperature, 0);       // sensor and scale index
-
+// CONFIG STATUS
 // Print current config settings (json)
 ~cwtConfig.postln;
 ~spectrumConfig.postln;
@@ -99,6 +165,9 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
     "%: %".format(key, ~spectrumConfig[key]).postln;
 };
 
+~cwtRun[\activeOutputBus].postln;
+~spectrumRun[\activeOutputBus].postln;
+s.options.numOutputBusChannels.postln;
 
 // PLANNED / UNSUPPORTED
 // SuperCollider MIDI output, per-sensor tracked waveforms, effects, FM,

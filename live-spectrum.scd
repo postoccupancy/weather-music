@@ -44,7 +44,7 @@ if(~weatherLeaseAcquire.isNil) {
     baseNoteOverrides: Dictionary.new, pitchSpanOverrides: Dictionary.new,
     temperatureWaveform: \sine, humidityWaveform: \sine, pressureWaveform: \sine,
     temperatureGain: 1.0, humidityGain: 1.0, pressureGain: 1.0,
-    physicalGain: 0.1, significanceGain: 0.002, masterGain: 0.1,
+    physicalGain: 1.0, significanceGain: 1.0, masterGain: 1.0,
     amplitudeCeiling: 0.02, smoothingSeconds: 2.0, staleTimeoutSeconds: 15.0,
     pendingTimeoutSeconds: 3.0, maxPendingFrames: 4, maxScales: 256,
     outputBus: 2, fallbackOutputBus: 0,
