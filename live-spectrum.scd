@@ -40,7 +40,7 @@ if(~weatherLeaseAcquire.isNil) {
 ~spectrumConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
     mode: \physical, referenceTempC: 20, referenceRH: 50, referencePressureHpa: 1013.25,
-    baseNote: 48.0, pitchSpan: 36.0,
+    baseNote: 48.0, pitchSpan: 48.0,
     baseNoteOverrides: Dictionary.new, pitchSpanOverrides: Dictionary.new,
     temperatureWaveform: \sine, humidityWaveform: \sine, pressureWaveform: \sine,
     temperatureGain: 1.0, humidityGain: 1.0, pressureGain: 1.0,
@@ -48,6 +48,10 @@ if(~weatherLeaseAcquire.isNil) {
     amplitudeCeiling: 0.02, smoothingSeconds: 2.0, staleTimeoutSeconds: 15.0,
     pendingTimeoutSeconds: 3.0, maxPendingFrames: 4, maxScales: 256,
     outputBus: 2, fallbackOutputBus: 0,
+    midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
+    temperatureMidiChannel: 1, humidityMidiChannel: 2, pressureMidiChannel: 3,
+    midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.02,
+    midiExpressionSmoothing: 0.5, midiExpressionDeadband: 2, midiNoteOnVelocity: 64,
     diagnosticsSeconds: 10.0, rejectDiagnostics: true, rejectDiagnosticSeconds: 5.0,
     shutdownSeconds: 2.0
 );
@@ -55,11 +59,14 @@ if(~weatherLeaseAcquire.isNil) {
 // OSC strings arrive as Symbols in SuperCollider 3.14's native decoder.
 ~spectrumText = { |v| v.isString or: { v.isKindOf(Symbol) } };
 ~spectrumSafe = { |v, maximum=100| if(~spectrumFinite.value(v)) { v.clip(0, maximum) } { 0 } };
-~spectrumPitch = { |hz, config, signal|
+~spectrumMidiCoordinate = { |hz, config, signal|
     var c = config ? ~spectrumConfig;
     var base = c[\baseNoteOverrides][signal] ? c[\baseNote];
     var span = c[\pitchSpanOverrides][signal] ? c[\pitchSpan];
-    (base + (span * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))).midicps
+    base + (span * ((hz.clip(0.05, 1) / 0.05).log2 / 20.log2))
+};
+~spectrumPitch = { |hz, config, signal|
+    ~spectrumMidiCoordinate.value(hz, config, signal).midicps
 };
 ~spectrumWaveControls = { |waveform|
     switch(waveform,
@@ -81,6 +88,121 @@ if(~weatherLeaseAcquire.isNil) {
     if((row[5] == 1) and: { ~spectrumFinite.value(row[4]) } and: { row[4] > 0 }) {
         row[1] / row[4].sqrt
     } { nil }
+};
+
+// MIDI transport is isolated behind these functions so fixture tests can inject
+// a recorder without requiring a physical or virtual MIDI destination.
+~spectrumMidiOpen = { |device, port|
+    var out;
+    MIDIClient.init;
+    out = MIDIOut.newByName(device.asString, port.asString);
+    out.latency = 0;
+    out
+};
+~spectrumMidiEmit = { |out, type, channel, note=0, value=0|
+    switch(type,
+        \noteOn, { out.noteOn(channel, note, value) },
+        \noteOff, { out.noteOff(channel, note, value) },
+        \polyTouch, { out.polyTouch(channel, note, value) },
+        \allNotesOff, { out.allNotesOff(channel) }
+    );
+};
+~spectrumMidiPanicRun = { |run|
+    if(run.notNil) {
+        if(run[\midiOut].notNil) {
+            run[\midiActive].values.do { |entry|
+                ~spectrumMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
+            };
+            run[\midiChannelsUsed].do { |channel|
+                ~spectrumMidiEmit.value(run[\midiOut], \allNotesOff, channel);
+            };
+        };
+        run[\midiActive].clear; run[\midiChannelsUsed].clear;
+    };
+};
+~spectrumMidiConnect = { |run|
+    var c = ~spectrumConfig, error, destinations;
+    ~spectrumMidiPanicRun.value(run); run[\midiOut] = nil; run[\midiConnected] = false;
+    if(c[\midiEnabled]) {
+        try { run[\midiOut] = ~spectrumMidiOpen.value(c[\midiDevice], c[\midiPort]) }
+        { |caught| error = caught };
+        if(run[\midiOut].notNil) {
+            run[\midiConnected] = true; run[\midiError] = nil;
+            "Spectrum MIDI connected: % / %.".format(c[\midiDevice], c[\midiPort]).postln;
+        } {
+            try {
+                MIDIClient.init;
+                destinations = MIDIClient.destinations.collect { |endpoint|
+                    endpoint.device.asString ++ " / " ++ endpoint.name.asString
+                };
+            } { |caught| if(error.isNil) { error = caught } };
+            run[\midiError] = if(error.notNil) { error.asString } { "destination not found" };
+            "Spectrum MIDI unavailable: configured destination '% / %' could not be opened (%). Available destinations: %."
+                .format(c[\midiDevice], c[\midiPort], run[\midiError], destinations ? []).warn;
+        };
+    } { run[\midiError] = "disabled" };
+};
+~spectrumMidiDesired = { |run|
+    var desired = Dictionary.new, c = ~spectrumConfig;
+    run[\streams].values.do { |st|
+        var channel = (c[(st[\signal].asString ++ "MidiChannel").asSymbol] ? 1).asInteger.clip(1, 16) - 1;
+        var targets = st[\targets] ? [];
+        if(st[\ready] and: { st[\muted].not } and: { st[\rows].size == targets.size }) {
+            st[\rows].do { |row, index|
+                var amp = targets[index], note, key, entry;
+                if(amp > 0) {
+                    note = (~spectrumMidiCoordinate.value(row[0], c, st[\signal]) + 0.5).floor.asInteger.clip(0, 127);
+                    key = channel.asString ++ "/" ++ note.asString;
+                    entry = desired[key];
+                    if(entry.isNil) {
+                        desired[key] = (channel: channel, note: note, amplitude: amp, signals: Set[st[\signal]])
+                    } {
+                        entry[\amplitude] = entry[\amplitude] + amp; entry[\signals].add(st[\signal]);
+                    };
+                };
+            };
+        };
+    };
+    desired
+};
+~spectrumMidiUpdate = { |run|
+    var c = ~spectrumConfig, desired, now = Main.elapsedTime, dt, alpha, floor, ceiling, deadband, velocity;
+    if(c[\midiEnabled].not or: { run[\midiConnected].not }) { ~spectrumMidiPanicRun.value(run) } {
+        desired = ~spectrumMidiDesired.value(run);
+        floor = c[\midiExpressionFloor]; ceiling = c[\midiExpressionCeiling];
+        deadband = c[\midiExpressionDeadband].asInteger; velocity = c[\midiNoteOnVelocity].asInteger;
+        dt = (now - (run[\midiLastUpdate] ? now)).max(0.001); run[\midiLastUpdate] = now;
+        alpha = if(c[\midiExpressionSmoothing] <= 0) { 1 } { 1 - (dt.neg / c[\midiExpressionSmoothing]).exp };
+        run[\midiActive].keys.asArray.do { |key|
+            if(desired[key].isNil or: { desired[key][\amplitude] < floor }) {
+                var old = run[\midiActive].removeAt(key);
+                ~spectrumMidiEmit.value(run[\midiOut], \noteOff, old[\channel], old[\note], 0);
+            };
+        };
+        desired.keysValuesDo { |key, wanted|
+            var active = run[\midiActive][key], smooth, expression;
+            if(wanted[\amplitude] >= floor) {
+                smooth = if(active.isNil) { wanted[\amplitude] } {
+                    active[\smoothed] + ((wanted[\amplitude] - active[\smoothed]) * alpha)
+                };
+                expression = (((smooth.clip(floor, ceiling) - floor) / (ceiling - floor)) * 126 + 1)
+                    .round.asInteger.clip(1, 127);
+                if(active.isNil) {
+                    active = (channel: wanted[\channel], note: wanted[\note], smoothed: smooth, expression: expression,
+                        signals: wanted[\signals]);
+                    run[\midiActive][key] = active; run[\midiChannelsUsed].add(wanted[\channel]);
+                    ~spectrumMidiEmit.value(run[\midiOut], \noteOn, wanted[\channel], wanted[\note], velocity);
+                    ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, wanted[\channel], wanted[\note], expression);
+                } {
+                    active[\smoothed] = smooth; active[\signals] = wanted[\signals];
+                    if((expression - active[\expression]).abs >= deadband) {
+                        active[\expression] = expression;
+                        ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, active[\channel], active[\note], expression);
+                    };
+                };
+            };
+        };
+    };
 };
 ~spectrumBankDef = SynthDef(\weatherSpectrumBank, { |out=0, smoothing=2, waveMix=0, waveWidth=0.5, waveLevel=1|
     var freqs = NamedControl.kr(\freqs, Array.fill(48, 440));
@@ -139,6 +261,7 @@ if(~weatherLeaseAcquire.isNil) {
         };
     };
     run[\output].set(\master, ~spectrumSafe.value(c[\masterGain], 1));
+    ~spectrumMidiUpdate.value(run);
     if(clamps > 0 and: { (Main.elapsedTime - run[\lastClamp]) > 5 }) {
         "Spectrum safety: % scale amplitudes clamped; reduce gains.".format(clamps).warn;
         run[\lastClamp] = Main.elapsedTime;
@@ -311,6 +434,25 @@ if(~weatherLeaseAcquire.isNil) {
         };
     };
 };
+~spectrumMidiStatus = {
+    var run = ~spectrumRun, c = ~spectrumConfig;
+    if(run.isNil) {
+        "Spectrum MIDI: stopped enabled=% destination='% / %' channels=[%, %, %]"
+            .format(c[\midiEnabled], c[\midiDevice], c[\midiPort], c[\temperatureMidiChannel],
+                c[\humidityMidiChannel], c[\pressureMidiChannel]).postln;
+    } {
+        "Spectrum MIDI: enabled=% connected=% destination='% / %' channels=[temperature:% humidity:% pressure:%] activeNotes=% error=%"
+            .format(c[\midiEnabled], run[\midiConnected], c[\midiDevice], c[\midiPort],
+                c[\temperatureMidiChannel], c[\humidityMidiChannel], c[\pressureMidiChannel],
+                run[\midiActive].size, run[\midiError]).postln;
+        run[\midiActive].values.asArray.sort { |a, b|
+            (a[\channel] < b[\channel]) or: { (a[\channel] == b[\channel]) and: { a[\note] < b[\note] } }
+        }.do { |entry|
+            "  channel=% note=% expression=% amplitude=% signals=%".format(entry[\channel] + 1, entry[\note],
+                entry[\expression], entry[\smoothed].round(0.000001), entry[\signals].asArray).postln;
+        };
+    };
+};
 ~spectrumInspect = { |signal=\temperature, index=0|
     var st = if(~spectrumRun.notNil) { ~spectrumRun[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] };
     if(st.notNil and: { index.isInteger } and: { index >= 0 } and: { index < st[\rows].size }) {
@@ -330,6 +472,41 @@ if(~weatherLeaseAcquire.isNil) {
     } { "Start a fully initialized spectrum before running ~spectrumTestTone.value.".warn };
 };
 ~spectrumSetMode = { |mode| if([\physical, \significance].includes(mode)) { ~spectrumConfig[\mode] = mode } { "Unknown mode".warn } };
+~spectrumSetMidiEnabled = { |enabled|
+    if([true, false].includes(enabled)) {
+        ~spectrumConfig[\midiEnabled] = enabled;
+        if(~spectrumRun.notNil) {
+            if(enabled) { ~spectrumMidiConnect.value(~spectrumRun) } {
+                ~spectrumMidiPanicRun.value(~spectrumRun);
+                ~spectrumRun[\midiOut] = nil; ~spectrumRun[\midiConnected] = false; ~spectrumRun[\midiError] = "disabled";
+            };
+        };
+    } { "MIDI enabled must be true or false.".warn };
+};
+~spectrumSetMidiDestination = { |device, port|
+    if(~spectrumText.value(device) and: { ~spectrumText.value(port) }
+        and: { device.asString.notEmpty } and: { port.asString.notEmpty }) {
+        ~spectrumConfig[\midiDevice] = device.asString; ~spectrumConfig[\midiPort] = port.asString;
+        if(~spectrumRun.notNil) { ~spectrumMidiConnect.value(~spectrumRun) };
+    } { "MIDI destination requires nonempty device and port names.".warn };
+};
+~spectrumSetMidiChannel = { |signal, channel|
+    if([\temperature, \humidity, \pressure].includes(signal) and: { channel.isInteger }
+        and: { channel >= 1 } and: { channel <= 16 }) {
+        ~spectrumConfig[(signal.asString ++ "MidiChannel").asSymbol] = channel;
+    } { "MIDI channel requires temperature/humidity/pressure and a channel from 1 to 16.".warn };
+};
+~spectrumSetMidiExpression = { |floor, ceiling, smoothing=0.5, deadband=2, velocity=64|
+    if(~spectrumFinite.value(floor) and: { ~spectrumFinite.value(ceiling) } and: { floor >= 0 }
+        and: { ceiling > floor } and: { ~spectrumFinite.value(smoothing) } and: { smoothing >= 0 }
+        and: { deadband.isInteger } and: { deadband >= 0 } and: { deadband <= 127 }
+        and: { velocity.isInteger } and: { velocity >= 1 } and: { velocity <= 127 }) {
+        ~spectrumConfig[\midiExpressionFloor] = floor; ~spectrumConfig[\midiExpressionCeiling] = ceiling;
+        ~spectrumConfig[\midiExpressionSmoothing] = smoothing; ~spectrumConfig[\midiExpressionDeadband] = deadband;
+        ~spectrumConfig[\midiNoteOnVelocity] = velocity;
+    } { "Invalid MIDI expression settings: require 0 <= floor < ceiling, smoothing >= 0, deadband 0..127, velocity 1..127.".warn };
+};
+~spectrumMidiPanic = { ~spectrumMidiPanicRun.value(~spectrumRun) };
 ~spectrumSetBaseNote = { |note, signal|
     if(signal.notNil and: { [\temperature, \humidity, \pressure].includes(signal).not }) { "Unknown spectrum pitch-override sensor.".warn } {
         if(note.isNil and: { signal.notNil }) { ~spectrumConfig[\baseNoteOverrides].removeAt(signal) } {
@@ -389,6 +566,7 @@ if(~weatherLeaseAcquire.isNil) {
     if(run.notNil and: { run[\running] }) {
         var finish;
         run[\running] = false;
+        ~spectrumMidiPanicRun.value(run); run[\midiConnected] = false; run[\midiOut] = nil;
         if(run[\subscribed]) { ~weatherLeaseRelease.value(\spectrum, run[\leaseKey]); run[\subscribed] = false };
         if(run[\receiver].notNil) { thisProcess.removeOSCRecvFunc(run[\receiver]) };
         [\startup, \tick].do { |key| if(run[key] !== thisThread) { run[key].tryPerform(\stop) } };
@@ -411,13 +589,16 @@ if(~weatherLeaseAcquire.isNil) {
         run = (running: true, subscribed: false, router: NetAddr(c[\routerIP], c[\routerPort]), port: c[\localPort],
             streams: Dictionary.new, rejected: 0, ignored: 0, incomplete: 0, completed: 0,
             lastRejectDiagnostic: -100, lastClamp: -100, lastDiagnostic: Main.elapsedTime,
-            routingState: \initializing, activeOutputBus: nil, outputPeak: 0.0, outputSeen: nil);
+            routingState: \initializing, activeOutputBus: nil, outputPeak: 0.0, outputSeen: nil,
+            midiOut: nil, midiConnected: false, midiError: nil, midiActive: Dictionary.new,
+            midiChannelsUsed: Set.new, midiLastUpdate: Main.elapsedTime);
         ~spectrumRun = run;
         [\temperature, \humidity, \pressure].do { |signal|
             run[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] = (signal: signal, ready: false,
                 muted: false, reason: "waiting", rows: [], frame: 0, seen: Main.elapsedTime,
                 pending: Dictionary.new, retired: List.new, waveform: nil, waveLevel: 1.0);
         };
+        ~spectrumMidiConnect.value(run);
         run[\onStop] = { if(~spectrumRun === run) { ~spectrumStop.value(true) } };
         run[\onQuit] = { |server| if(server === s) { run[\onStop].value } };
         CmdPeriod.add(run[\onStop]); ServerQuit.add(run[\onQuit]);

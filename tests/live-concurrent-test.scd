@@ -5,6 +5,8 @@ var check, controls = List.new, receiver, deadline;
 ~cwtAutoStart = false; ~spectrumAutoStart = false;
 (root +/+ "live-spectrum.scd").load;
 (root +/+ "live-cwt.scd").load;
+~spectrumMidiOpen = { |device, port| [device, port] };
+~spectrumMidiEmit = { |out, type, channel, note=0, value=0| nil };
 check = { |condition, label|
     if(condition.not) {
         ("FAIL: " ++ label).postln; ~cwtStop.value; ~spectrumStop.value(true); s.quit; 1.exit
@@ -24,6 +26,7 @@ Routine({
     while { (~cwtRun.tryPerform(\at, \receiver).isNil or: { ~spectrumRun.tryPerform(\at, \receiver).isNil })
         and: { Main.elapsedTime < deadline } } { 0.1.wait };
     check.value(~cwtRun[\receiver].notNil and: { ~spectrumRun[\receiver].notNil }, "both instruments started on one receive port");
+    check.value(~spectrumRun[\midiConnected], "spectrum MIDI initializes by default alongside CWT");
     lease = ~weatherLeaseState.values.first;
     check.value(lease.notNil and: { lease[\owners].includes(\cwt) }
         and: { lease[\owners].includes(\spectrum) } and: { lease[\heartbeat].notNil }, "shared lease owns both instruments and one heartbeat");

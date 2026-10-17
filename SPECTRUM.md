@@ -14,7 +14,7 @@ controls are:
 ~spectrumSetMode.value(\physical);
 ~spectrumSetMode.value(\significance);
 ~spectrumSetBaseNote.value(48);      // MIDI-note coordinate, continuous playback
-~spectrumSetPitchSpan.value(36);     // semitones across 0.05..1 environmental Hz
+~spectrumSetPitchSpan.value(48);     // default; semitones across 0.05..1 environmental Hz
 ~spectrumSetBaseNote.value(60, \temperature); // optional sensor override
 ~spectrumSetBaseNote.value(nil, \temperature);// clear sensor override
 ~spectrumSetWaveform.value(\temperature, \sine);
@@ -30,6 +30,8 @@ controls are:
 ~spectrumInspect.value(\temperature, 0);
 ~spectrumTestTone.value;             // brief tone through the spectrum output stage
 ~spectrumSetOutputBus.value(2);      // zero-based hardware outputs 3–4
+~spectrumMidiStatus.value;
+~spectrumMidiPanic.value;
 ```
 
 To reload after editing, run `~spectrumStop.value`, wait for “Spectrum stopped,”
@@ -44,8 +46,8 @@ The pitch mapping follows Electric Sea's resident interface in
 `mappedAudioFrequency`, and the `base-octave` and `span` inputs. Electric Sea offers
 base octaves 1–5 (default 3) and spans of 1–6 octaves (default 3). Weather Music
 expresses the same ranges as MIDI coordinates: `baseNote` accepts 24–72 and
-`pitchSpan` accepts 12–72 semitones. Defaults 48 and 36 preserve C3–C6. Values may
-be fractional and playback is never rounded to MIDI notes. An optional sensor
+`pitchSpan` accepts 12–72 semitones. Defaults 48 and 48 span four octaves. Values may
+be fractional and audio playback is never rounded to MIDI notes. An optional sensor
 argument installs an override; passing `nil` with that sensor clears the override.
 
 ```text
@@ -53,6 +55,9 @@ fraction = log2(clamp(environmentalHz, 0.05, 1) / 0.05) / log2(20)
 midi      = baseNote + pitchSpan * fraction
 audioHz   = 440 * 2^((midi - 69) / 12)
 ```
+
+Spectrum MIDI rounds the same coordinate to the nearest MIDI note. This does not
+alter continuous audio pitch.
 
 For example, these move the lowest scale to C4 and compress the bank to two
 octaves, immediately and without touching OSC state:
@@ -120,6 +125,71 @@ conversion factors are not applied in significance mode. Adjust `physicalGain`,
 Targets are bounded by `amplitudeCeiling`; rate-limited warnings report clamping,
 and a final limiter catches exceptional summed peaks.
 
+## Sustained spectrum MIDI
+
+Spectrum MIDI is enabled by default and startup attempts to open `IAC Driver` /
+`Bus 3 - Ableton Live`. Destination names must match the operating system exactly:
+
+```supercollider
+MIDIClient.init;
+MIDIClient.destinations.postln;
+~spectrumSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
+```
+
+If the endpoint cannot be opened, the sketch remains MIDI-enabled, prints the
+configured endpoint and available destinations, and sends nothing until a valid
+destination is selected. MIDI uses the effective per-scale targets before audio
+`masterGain`, so it continues when audio is muted at the master.
+
+```supercollider
+~spectrumSetMidiEnabled.value(true);             // default; connect immediately
+~spectrumSetMidiEnabled.value(false);            // release notes and disconnect
+~spectrumSetMidiChannel.value(\temperature, 1);  // user-facing channels 1..16
+~spectrumSetMidiChannel.value(\humidity, 2);
+~spectrumSetMidiChannel.value(\pressure, 3);
+~spectrumSetMidiExpression.value(0.0001, 0.02, 0.5, 2, 64);
+~spectrumMidiStatus.value;
+~spectrumMidiPanic.value;
+```
+
+The expression arguments are amplitude floor, summation ceiling, smoothing seconds,
+MIDI-value deadband, and initial note-on velocity. A scale at or above the floor
+starts one held note. Amplitude changes send polyphonic key pressure without
+retriggering. Scales that round to the same channel/note are summed and clipped at
+the expression ceiling; the note remains on until every contributor is inactive.
+Mute, invalid/stale frames, pitch or channel remapping, destination changes,
+disable, stop, server quit, and Command-period release affected notes. Panic also
+sends all-notes-off on every channel used by the run.
+
+No pitch bend is sent, so unrelated notes cannot be bent. This initial mode has no
+rhythmic pulses, selection, top-N ranking, or persistence behavior.
+
+### Ableton Live routing on macOS
+
+1. In **Audio MIDI Setup → MIDI Studio**, enable IAC Driver and create a port such
+   as `Bus 3 - Ableton Live`.
+2. In Ableton **Settings → Link, Tempo & MIDI**, enable **Track** input for that IAC
+   port. Remote and Sync are unnecessary.
+3. Create three instrument tracks. Select the IAC port and input channels 1, 2,
+   and 3 for temperature, humidity, and pressure. Monitor **In**, or use **Auto**
+   and arm the tracks.
+4. Run `~spectrumMidiStatus.value`; ready data should show `connected=true` and
+   active notes. Use an instrument that supports polyphonic aftertouch for
+   independent note expression.
+5. Before changing live sets, call `~spectrumMidiPanic.value` or stop normally.
+
+Live verification:
+
+```supercollider
+MIDIClient.destinations.postln;
+~spectrumSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
+~spectrumSetMidiEnabled.value(true);
+~spectrumMidiStatus.value;
+~spectrumMute.value(\temperature, true);   // channel 1 releases
+~spectrumMute.value(\temperature, false);  // channel 1 returns
+~spectrumMidiPanic.value;
+```
+
 ## Receiver behavior and diagnostics
 
 The receiver validates schema v3 and reassembles frames by stream, epoch, and
@@ -165,6 +235,12 @@ changes, invalidation, timeout, both amplitude modes, live pitch endpoints and
 bounds, independent waveform selection and compensation, worst-case target
 clamping, gain/mute controls, persistent synth nodes, heartbeat, and
 start/stop/restart cleanup.
+
+The MIDI fixture replaces `MIDIOut` with an in-memory recorder, so no physical or
+virtual synthesizer is required. It verifies default connection attempts and clear
+failure state, 36/48/60-semitone mappings, collision aggregation, sensor channels,
+polyphonic aftertouch, live channel and pitch remapping, explicit disable/re-enable,
+mode/gain/mute changes, invalid and stale frame note-offs, panic, and stop cleanup.
 
 For Windows, stop the old sketch, evaluate `~cwtStop.value` if it is loaded, then
 evaluate all of `live-spectrum.scd`. Within a few analysis cycles:

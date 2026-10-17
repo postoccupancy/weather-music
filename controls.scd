@@ -20,6 +20,18 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 ~spectrumAudioStatus.value;
 ~spectrumTestTone.value;
 
+// FULL SPECTRUM MIDI — enabled by default; destination names must match exactly
+MIDIClient.init; MIDIClient.destinations.postln;
+~spectrumSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
+~spectrumSetMidiEnabled.value(true);           // false sends note-offs and disables MIDI
+~spectrumSetMidiChannel.value(\temperature, 1);// user-facing channels 1..16
+~spectrumSetMidiChannel.value(\humidity, 2);
+~spectrumSetMidiChannel.value(\pressure, 3);
+~spectrumSetMidiExpression.value(0.0001, 0.02, 0.5, 2, 64);
+// Arguments: amplitude floor, ceiling, smoothing seconds, MIDI deadband, note velocity
+~spectrumMidiStatus.value;
+~spectrumMidiPanic.value;                      // note-offs plus all-notes-off
+
 // DIAGNOSTICS
 ~cwtStatus.value;
 ~spectrumStatus.value;
@@ -40,7 +52,7 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 
 // FULL SPECTRUM — pitch and per-sensor waveform
 ~spectrumSetBaseNote.value(36);                // default 48; valid 24..72
-~spectrumSetPitchSpan.value(48);               // default 36; 12..72 semitones
+~spectrumSetPitchSpan.value(48);               // default 48; 12..72 semitones
 ~spectrumSetBaseNote.value(60, \temperature);  // set optional sensor override
 ~spectrumSetBaseNote.value(nil, \temperature); // clear optional sensor override
 ~spectrumSetPitchSpan.value(24, \temperature); // set optional sensor override
@@ -107,5 +119,5 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 s.options.numOutputBusChannels.postln;
 
 // PLANNED / UNSUPPORTED
-// SuperCollider MIDI output, per-sensor tracked waveforms, effects, FM,
-// granular synthesis, VCV Rack, and automatic audio-device changes.
+// Per-sensor tracked waveforms, effects, FM, granular synthesis, rhythmic MIDI,
+// spectrum selection/ranking, VCV Rack, and automatic audio-device changes.
