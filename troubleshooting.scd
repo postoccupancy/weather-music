@@ -35,10 +35,23 @@ s.avgCPU.postln;
 ~spectrumStop.value(true);
 
 s.quit;
+
+// BlackHole 16ch
 s.options.outDevice = "BlackHole 16ch";
 s.options.numInputBusChannels = 0;
 s.options.numOutputBusChannels = 16;
-s.options.sampleRate = 48000;
+
+// Scarlett 2i2 USB
+s.options.outDevice = "Scarlett 2i2 USB";
+s.options.numInputBusChannels = 2;
+s.options.numOutputBusChannels = 2;
+
+// MacBook Pro Speakers
+s.options.outDevice = "MacBook Pro Speakers";
+s.options.numInputBusChannels = 0;
+s.options.numOutputBusChannels = 2;
+
+
 s.boot;
 
 ~cwtStart.value;
