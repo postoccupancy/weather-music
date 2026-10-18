@@ -24,7 +24,7 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
 ~spectrumSetMidiEnabled.value(true);           // false sends note-offs and disables MIDI
-~spectrumSetMidiChannel.value(\temperature, 1);// user-facing channels 1..16
+~spectrumSetMidiChannel.value(\temperature, 1);// spectrum-owned channels 1..3
 ~spectrumSetMidiChannel.value(\humidity, 2);
 ~spectrumSetMidiChannel.value(\pressure, 3);
 ~spectrumSetMidiExpression.value(0.0001, 0.005, 0.5, 2, 64);
@@ -32,7 +32,7 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumMidiStatus.value;
 ~spectrumMidiPanic.value;                      // note-offs plus all-notes-off
 
-// TRACKED-VOICE MIDI — enabled by default; channels 2–16 are allocated per tracker
+// TRACKED-VOICE MIDI — enabled by default; channels 4–16 are allocated per tracker
 ~cwtSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
 ~cwtSetMidiEnabled.value(true);                // false releases notes and disables MIDI
 ~cwtSetMidiBendRange.value(2);                 // match the Ableton instrument: ±2 semitones
@@ -40,6 +40,7 @@ MIDIClient.init; MIDIClient.destinations.postln;
 // Arguments: effective-amplitude floor/ceiling, smoothing seconds, deadband, velocity
 ~cwtMidiStatus.value;
 ~cwtMidiPanic.value;
+~cwtMidiResync.value;                        // resend sustained notes after changing instruments
 
 // DIAGNOSTICS
 ~cwtStatus.value;

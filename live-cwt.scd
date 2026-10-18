@@ -102,7 +102,7 @@ if(~weatherLeaseAcquire.isNil) {
 ~cwtMidiRelease = { |run, key|
     var entry = run[\midiVoices][key];
     if(entry.notNil) {
-        if(run[\midiOut].notNil) {
+        if(run[\midiOut].notNil and: { entry[\channel] >= 3 } and: { entry[\channel] <= 15 }) {
             ~cwtMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
             ~cwtMidiEmit.value(run[\midiOut], \touch, entry[\channel], 0, 0);
             ~cwtMidiEmit.value(run[\midiOut], \bend, entry[\channel], 0, 8192);
@@ -114,7 +114,8 @@ if(~weatherLeaseAcquire.isNil) {
     if(run.notNil) {
         run[\midiVoices].keys.asArray.do { |key| ~cwtMidiRelease.value(run, key) };
         if(run[\midiOut].notNil) {
-            (1..15).do { |channel| ~cwtMidiEmit.value(run[\midiOut], \allNotesOff, channel) };
+            // Channels 4-16 (SuperCollider 3-15) belong exclusively to tracked voices.
+            (3..15).do { |channel| ~cwtMidiEmit.value(run[\midiOut], \allNotesOff, channel) };
         };
     };
 };
@@ -141,7 +142,7 @@ if(~weatherLeaseAcquire.isNil) {
     if(c[\midiEnabled] and: { run[\midiConnected] } and: { amplitude > 0 }) {
         if(entry.isNil) {
             used = run[\midiVoices].values.collect { |item| item[\channel] };
-            channel = (1..15).detect { |candidate| used.includes(candidate).not };
+            channel = (3..15).detect { |candidate| used.includes(candidate).not };
             if(channel.notNil) {
                 note = mapped[\continuousMidi].round.asInteger.clip(0, 127);
                 entry = (channel: channel, note: note, smoothed: amplitude, expression: -1, updated: now,
@@ -293,6 +294,17 @@ if(~weatherLeaseAcquire.isNil) {
     } { "Invalid tracked MIDI expression settings.".warn };
 };
 ~cwtMidiPanic = { ~cwtMidiPanicRun.value(~cwtRun) };
+~cwtMidiResync = {
+    var run = ~cwtRun;
+    if(run.notNil and: { run[\running] } and: { run[\reconcile].notNil }
+        and: { run[\midiConnected] } and: { ~cwtConfig[\midiEnabled] }) {
+        ~cwtMidiPanicRun.value(run);
+        // Reconciliation reconstructs notes from the current tracker selection
+        // without replacing OSC handlers, tracker state, or audio Synths.
+        run[\reconcile].value;
+        "Tracked MIDI resynced on channels 4-16.".postln;
+    } { "Tracked MIDI resync requires a running, connected, enabled MIDI output.".warn };
+};
 
 ~cwtStop = {
     var run = ~cwtRun;

@@ -59,9 +59,13 @@ Routine({
     0.3.wait;
     check.value(~cwtRun[\synths].size == 4, "five candidates produce four synths");
     check.value(~cwtRun[\midiVoices].size == 4 and: {
-        ~cwtRun[\midiVoices].values.collect { |entry| entry[\channel] }.asSet == Set[1,2,3,4]
+        ~cwtRun[\midiVoices].values.collect { |entry| entry[\channel] }.asSet == Set[3,4,5,6]
     }, "selected voices receive deterministic independent channels");
     check.value(midiCount.value(\noteOn) == 4 and: { midiCount.value(\touch) >= 4 }, "new voices send notes and initial channel pressure");
+    check.value(midi.every { |message| message[1] >= 3 }, "tracked MIDI owns only channels 4-16");
+    midi.clear; ~cwtMidiResync.value; 0.05.wait;
+    check.value([\noteOff, \allNotesOff, \bend, \noteOn, \touch].every { |type| midiCount.value(type) > 0 }
+        and: { midi.every { |message| message[1] >= 3 } }, "resync releases and reconstructs tracked MIDI only");
     midi.clear; sendVoice.value(1, 0.8, 1, 0.14, 1001); sendVoice.value(2, 0.8, 1, 0.16, 1001);
     sendState.value([1,2,3,4,5], 1, 1001); 0.3.wait;
     check.value(~cwtRun[\midiVoices]["fixture/temperature/1"][\bend]
@@ -138,7 +142,8 @@ Routine({
     0.2.wait;
     check.value(controls.includesEqual("/router/unsubscribe"), "native unsubscribe received");
     check.value(~cwtRun.isNil, "stop is idempotent");
-    check.value(midiCount.value(\allNotesOff) > 0, "stop sends MIDI panic");
+    check.value(midiCount.value(\allNotesOff) > 0 and: { midi.every { |message| message[1] >= 3 } },
+        "stop sends MIDI panic only on tracked channels");
     ~cwtStart.value;
     0.5.wait;
     nextRun = ~cwtRun;

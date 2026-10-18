@@ -111,11 +111,12 @@ if(~weatherLeaseAcquire.isNil) {
     if(run.notNil) {
         if(run[\midiOut].notNil) {
             run[\midiActive].values.do { |entry|
-                ~spectrumMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
+                if((entry[\channel] >= 0) and: { entry[\channel] <= 2 }) {
+                    ~spectrumMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
+                };
             };
-            run[\midiChannelsUsed].do { |channel|
-                ~spectrumMidiEmit.value(run[\midiOut], \allNotesOff, channel);
-            };
+            // Channels 1-3 (SuperCollider 0-2) belong exclusively to the spectrum.
+            (0..2).do { |channel| ~spectrumMidiEmit.value(run[\midiOut], \allNotesOff, channel) };
         };
         run[\midiActive].clear; run[\midiChannelsUsed].clear;
     };
@@ -145,7 +146,7 @@ if(~weatherLeaseAcquire.isNil) {
 ~spectrumMidiDesired = { |run|
     var desired = Dictionary.new, c = ~spectrumConfig;
     run[\streams].values.do { |st|
-        var channel = (c[(st[\signal].asString ++ "MidiChannel").asSymbol] ? 1).asInteger.clip(1, 16) - 1;
+        var channel = (c[(st[\signal].asString ++ "MidiChannel").asSymbol] ? 1).asInteger.clip(1, 3) - 1;
         var targets = st[\targets] ? [];
         if(st[\ready] and: { st[\muted].not } and: { st[\rows].size == targets.size }) {
             st[\rows].do { |row, index|
@@ -492,9 +493,9 @@ if(~weatherLeaseAcquire.isNil) {
 };
 ~spectrumSetMidiChannel = { |signal, channel|
     if([\temperature, \humidity, \pressure].includes(signal) and: { channel.isInteger }
-        and: { channel >= 1 } and: { channel <= 16 }) {
+        and: { channel >= 1 } and: { channel <= 3 }) {
         ~spectrumConfig[(signal.asString ++ "MidiChannel").asSymbol] = channel;
-    } { "MIDI channel requires temperature/humidity/pressure and a channel from 1 to 16.".warn };
+    } { "Spectrum MIDI channel requires temperature/humidity/pressure and an owned channel from 1 to 3.".warn };
 };
 ~spectrumSetMidiExpression = { |floor, ceiling, smoothing=0.5, deadband=2, velocity=64|
     if(~spectrumFinite.value(floor) and: { ~spectrumFinite.value(ceiling) } and: { floor >= 0 }

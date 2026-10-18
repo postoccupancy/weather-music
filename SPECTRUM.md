@@ -149,7 +149,7 @@ destination is selected. MIDI uses the effective per-scale targets before audio
 ```supercollider
 ~spectrumSetMidiEnabled.value(true);             // default; connect immediately
 ~spectrumSetMidiEnabled.value(false);            // release notes and disconnect
-~spectrumSetMidiChannel.value(\temperature, 1);  // user-facing channels 1..16
+~spectrumSetMidiChannel.value(\temperature, 1);  // spectrum-owned channels 1..3
 ~spectrumSetMidiChannel.value(\humidity, 2);
 ~spectrumSetMidiChannel.value(\pressure, 3);
 ~spectrumSetMidiExpression.value(0.0001, 0.005, 0.5, 2, 64);
@@ -163,8 +163,9 @@ starts one held note. Amplitude changes send polyphonic key pressure without
 retriggering. Scales that round to the same channel/note are summed and clipped at
 the expression ceiling; the note remains on until every contributor is inactive.
 Mute, invalid/stale frames, pitch or channel remapping, destination changes,
-disable, stop, server quit, and Command-period release affected notes. Panic also
-sends all-notes-off on every channel used by the run.
+disable, stop, server quit, and Command-period release affected notes. Panic sends
+all-notes-off only on spectrum-owned channels 1–3. Tracked voices own channels 4–16,
+so cleanup and reconnects in either sketch cannot reset the other sketch's MIDI state.
 
 No pitch bend is sent, so unrelated notes cannot be bent. This initial mode has no
 rhythmic pulses, selection, top-N ranking, or persistence behavior.
@@ -176,7 +177,8 @@ rhythmic pulses, selection, top-N ranking, or persistence behavior.
 2. In Ableton **Settings → Link, Tempo & MIDI**, enable **Track** input for that IAC
    port. Remote and Sync are unnecessary.
 3. Create three instrument tracks. Select the IAC port and input channels 1, 2,
-   and 3 for temperature, humidity, and pressure. Monitor **In**, or use **Auto**
+   and 3 for temperature, humidity, and pressure. These are the only channels the
+   spectrum sketch may use. Monitor **In**, or use **Auto**
    and arm the tracks.
 4. Run `~spectrumMidiStatus.value`; ready data should show `connected=true` and
    active notes. Use an instrument that supports polyphonic aftertouch for

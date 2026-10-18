@@ -68,19 +68,22 @@ Change these live in the IDE; updates take effect on the next 100 ms control tic
 Tracked MIDI is enabled by default and follows the same selected tracker identities,
 pitch mapping, confidence normalization, sensor gain, and mute state as the audio
 instrument. It does not use the full-spectrum amplitude targets. Each active tracker
-gets the lowest free MIDI channel from channels 2–16, up to `maxPolyphony`; channel 1
-is reserved as the conventional MPE master channel. Its nearest MIDI note is held
+gets the lowest free MIDI channel from channels 4–16, up to `maxPolyphony`. Channels
+1–3 are reserved for the full-spectrum temperature, humidity, and pressure banks.
+Its nearest MIDI note is held
 while ordinary channel pitch bend carries the fractional pitch. If motion exceeds
 the configured bend range, the sender releases and rebases that one note on the same
 channel. Other voices are unaffected. Channel pressure carries the smoothed effective
 amplitude (defaults: floor 0.005, ceiling 0.18, smoothing 0.2 seconds, deadband 1).
 
 In Audio MIDI Setup, enable the IAC Driver and create `Bus 3 - Ableton Live`. In
-Ableton Live 12, enable that port for Track input, receive all channels, and use an
-MPE-compatible instrument with its pitch-bend range set to **±2 semitones**. This is
-MPE-style channel allocation: the messages are standard per-channel note, pitch bend,
-and channel pressure messages. A non-MPE instrument must still preserve incoming MIDI
-channels and respond to channel pressure for independent bends and expression.
+Ableton Live 12, enable that port for Track input. Route spectrum tracks from channels
+1–3 and the tracked instrument from channels 4–16. Use an MPE-compatible tracked
+instrument with its pitch-bend range set to **±2 semitones**. This is MPE-style
+per-voice allocation using standard note, pitch-bend, and channel-pressure messages;
+the sketch does not send MPE zone-configuration RPNs. Configure the instrument so
+channels 4–16 remain independent. A non-MPE instrument must likewise preserve incoming
+channels and respond to channel pressure.
 
 ```supercollider
 ~cwtSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
@@ -88,15 +91,17 @@ channels and respond to channel pressure for independent bends and expression.
 ~cwtSetMidiBendRange.value(2);        // 0.25..24; match the Ableton instrument
 ~cwtSetMidiExpression.value(0.005, 0.18, 0.2, 1, 64);
 ~cwtMidiStatus.value;                 // tracker, Hz, coordinate, note, channel, bend, expression
-~cwtMidiPanic.value;                  // note-offs, bend resets, all-notes-off
+~cwtMidiPanic.value;                  // cleanup on tracked channels 4-16 only
+~cwtMidiResync.value;                 // release/resend notes after changing instruments
 ```
 
 MIDI initialization happens before audio-server boot and expression does not include
 `masterVolume`, so MIDI output is independent of the SuperCollider output level and
 hardware bus. Stop, restart, Cmd-period, timeout, unready streams, deselection, and
 mute all release held notes and reset their channels. Changing the destination or
-bend range also panics first. Full-spectrum MIDI configuration and behavior are
-unchanged.
+bend range also panics first. Full-spectrum MIDI remains independent on channels 1–3.
+Resync rebuilds tracked MIDI from the current selection without restarting OSC
+reception or audio Synths.
 
 Other controls: `baseNote` (48), `pitchSpan` (36 semitones), `releaseSmoothing` (0.6 s),
 `releaseSeconds` (2.5 s), `trafficTimeout` (15 s), `diagnosticsInterval` (5 s).

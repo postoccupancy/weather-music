@@ -57,6 +57,7 @@ Routine({
     check.value((st[\targets][0] - 0.002).abs < 1e-7, "default significance target uses magnitude and background power");
     check.value(run[\midiActive].size == 48 and: { midiCount.value(\noteOn) == 48 }
         and: { midiCount.value(\polyTouch) == 48 }, "48-semitone mapping starts 48 held notes with aftertouch");
+    check.value(midi.every { |message| message[1] <= 2 }, "spectrum MIDI owns only channels 1-3");
     midi.clear; ~spectrumSetPitchSpan.value(36); 0.4.wait;
     check.value(run[\midiActive].size == 37 and: { run[\midiActive].values.collect { |entry| entry[\smoothed] }.maxItem > 0.003 },
         "36-semitone mapping aggregates scale collisions");
@@ -72,9 +73,11 @@ Routine({
     check.value(run[\midiActive].values.any { |entry| entry[\channel] == 0 }
         and: { run[\midiActive].values.any { |entry| entry[\channel] == 1 } }
         and: { run[\midiActive].values.any { |entry| entry[\channel] == 2 } }, "sensor streams use configured MIDI channels");
-    midi.clear; ~spectrumSetMidiChannel.value(\temperature, 4); 0.4.wait;
+    before = ~spectrumConfig[\temperatureMidiChannel]; ~spectrumSetMidiChannel.value(\temperature, 4);
+    check.value(~spectrumConfig[\temperatureMidiChannel] == before, "spectrum rejects tracked-voice channels");
+    midi.clear; ~spectrumSetMidiChannel.value(\temperature, 2); 0.4.wait;
     check.value(midi.select { |message| message[0] == \noteOff }.any { |message| message[1] == 0 }
-        and: { run[\midiActive].values.any { |entry| entry[\channel] == 3 } }, "live channel remap releases and reallocates notes");
+        and: { run[\midiActive].values.any { |entry| entry[\channel] == 1 } }, "live channel remap stays within spectrum ownership");
     ~spectrumSetMidiChannel.value(\temperature, 1); 0.4.wait;
     midi.clear; ~spectrumSetMidiEnabled.value(false); 0.3.wait;
     check.value(run[\midiActive].isEmpty and: { midiCount.value(\allNotesOff) > 0 }, "explicit MIDI disable releases all notes");
@@ -165,7 +168,8 @@ Routine({
     "Spectrum test server CPU avg=% peak=% UGens=%".format(s.avgCPU.round(0.01), s.peakCPU.round(0.01), s.numUGens).postln;
     midi.clear; ~spectrumStop.value; ~spectrumStop.value; 0.4.wait;
     check.value(~spectrumRun.isNil and: { controls.includesEqual("/router/unsubscribe") }, "stop cleanup");
-    check.value(midiCount.value(\allNotesOff) > 0, "stop sends MIDI panic and leaves no held notes");
+    check.value(midiCount.value(\allNotesOff) > 0 and: { midi.every { |message| message[1] <= 2 } },
+        "stop sends MIDI panic only on spectrum channels");
     ~spectrumMidiOpen = { |device, port| nil };
     ~spectrumStart.value; 0.5.wait; check.value(~spectrumRun[\receiver].notNil, "restart");
     check.value(~spectrumRun[\midiConnected].not and: { ~spectrumRun[\midiError].notNil }, "missing default destination reports connection failure");
