@@ -5,6 +5,10 @@ For the full 48-scale temperature, humidity, and pressure instrument, see
 they share one reference-counted native router lease and keep independent OSC
 handlers, synthesis groups, gains, and hardware output routes.
 
+For phase-accumulated pulse output on the independent Ableton rhythm bus, see
+[RHYTHM.md](RHYTHM.md). Rhythm is disabled by default and can run with or without
+the existing sustained MIDI tones.
+
 Open [`controls.scd`](controls.scd) beside both instrument files for the tracked
 voice, spectrum, routing, diagnostic, and lifecycle commands used during a live
 performance. Evaluate individual lines rather than the whole file; it deliberately
@@ -45,8 +49,8 @@ Change these live in the IDE; updates take effect on the next 100 ms control tic
 ```supercollider
 ~cwtConfig[\masterVolume] = 0.4;       // 0 mutes; browser default is 0.8
 ~cwtConfig[\pitchMode] = \continuous; // default, unquantized
-~cwtConfig[\pitchMode] = \midi;       // browser audio's rounded MIDI pitches
-~cwtConfig[\pitchMode] = \midiOutput; // actual MIDI-output pitch hysteresis
+~cwtConfig[\pitchMode] = \quantized;  // nearest semitone with pitch hysteresis
+~cwtConfig[\pitchHysteresis] = 0.1;   // margin beyond the nearest-note boundary
 ~cwtConfig[\deviceFilter] = "indoor-sky";
 ~cwtConfig[\signalFilter] = "temperature";
 ~cwtConfig[\deviceFilter] = nil;      // all devices
@@ -112,6 +116,10 @@ the old tails can persist for 2.5 seconds. Raising the cap above four explicitly
 changes the instrument's default limit. A summed stereo limiter catches exceptional
 peaks after the existing per-voice envelopes and master gain.
 
+Legacy `\midi` remains nearest-semitone mode without hysteresis and `\midiOutput`
+remains an alias for quantized mode with hysteresis. Pitch hysteresis affects only
+semitone changes; it is separate from confidence-based tracker selection.
+
 Stop/start after changing `routerIP`, `routerPort` or `localPort`. The existing
 router accepts **only localPort 9000** despite exposing this setting for future
 routers/testing. A LAN or Tailscale IPv4 address works; use the address reachable
@@ -157,13 +165,17 @@ With SuperCollider installed, run the native local fixture test:
 ```sh
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/live-cwt-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/controls-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/midi-rhythm-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-rhythm-selection-test.scd
 ```
 
 It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi
 subscription), and tests mapping, confidence/polyphony selection, sensor gain/mute,
 waveforms, output fallback, node continuity, release, readiness, ID reuse,
 heartbeat, timeout, independent bends, note rebasing, expression, MIDI cleanup, and
-repeated cleanup. `tests/live-concurrent-test.scd` verifies
+repeated cleanup. The rhythm fixtures use explicit timestamps and mocked MIDI to test
+phase, velocity, overlapping gate ownership, band/top-N selection, and note mapping.
+`tests/live-concurrent-test.scd` verifies
 both instruments share a lease and that stopping one does not unsubscribe the other.
 `tests/controls-test.scd` executes the control panel against API spies to catch
 syntax errors and stale command names without starting audio or contacting the router.

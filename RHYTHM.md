@@ -1,0 +1,93 @@
+# Environmental rhythm MIDI
+
+`live-cwt.scd` and `live-spectrum.scd` can emit independent rhythmic MIDI pulses
+alongside their sustained MIDI tones. Sustained tones remain enabled by default on
+`IAC Driver / Bus 3 - Ableton Live`; rhythm is disabled by default and uses the
+separate configurable destination `IAC Driver / Bus 4 - Ableton Rhythm`.
+
+Both outputs retain the channel ownership used by the sustained instruments:
+
+- spectrum temperature, humidity, and pressure: MIDI channels 1, 2, and 3;
+- tracked voices: MIDI channels 4–16, allocated deterministically by tracker identity.
+
+Each output has its own connection, note gates, panic, resync, and cleanup. A missing
+Bus 4 prints the configured destination and available ports without disconnecting or
+silencing Bus 3. Disabling or changing one output releases notes only on that bus.
+
+## Timing model
+
+Every rhythmic source owns a phase accumulator. The 20 ms rhythm loop advances phase
+from elapsed monotonic time and the source's mapped rate; OSC packet arrival does not
+trigger notes. Frequency changes alter subsequent phase speed without resetting phase,
+so independent sources drift naturally. There is no BPM clock, bar, grid, or tempo
+quantization.
+
+Environmental frequencies from 0.05–1 Hz map logarithmically to 0.5–4 pulse Hz by
+default (30–240 pulses per minute). These bounds are explicit time compression:
+
+```supercollider
+~cwtSetRhythmRate.value(0.5, 4.0);
+~spectrumSetRhythmRate.value(0.5, 4.0);
+```
+
+Pulses default to 80 ms and MIDI velocities 35–110. Tracked velocity follows the
+existing effective amplitude after confidence, normalization, sensor gain, and mute.
+Spectrum velocity follows scale significance. Event bursts are bounded per scheduler
+step. Shared channel/note gates retain an owner per source, so one source ending does
+not prematurely turn off another source's overlapping note.
+
+## Tracked voices
+
+The existing confidence selection and four-voice default are unchanged. A selected
+tracker keeps its rhythmic phase while its identity remains selected. The first four
+allocated channel slots use notes 36, 38, 42, and 45. Replacement, mute, stale data,
+unready state, stop, and restart release outstanding gates.
+
+```supercollider
+~cwtSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
+~cwtSetRhythmNotes.value([36, 38, 42, 45]);
+~cwtSetRhythmPulse.value(0.08, 35, 110);
+~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110);
+~cwtSetRhythmEnabled.value(true);
+~cwtRhythmStatus.value;
+~cwtRhythmResync.value;
+~cwtRhythmPanic.value;
+```
+
+## Full spectrum
+
+The default `perBand` selection chooses the most significant valid scale in each of
+three bands: 0.05–0.12 Hz, 0.12–0.35 Hz, and 0.35–1 Hz. With the default `perBand`
+note mapping these use notes 36, 38, and 42 on each sensor's existing channel. The
+`topN` mode chooses the N most significant scales per sensor. `perSensor` note mapping
+uses temperature 36, humidity 38, and pressure 42 for every selected scale.
+
+```supercollider
+~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
+~spectrumSetRhythmSelection.value(\perBand, 3);
+~spectrumSetRhythmSelection.value(\topN, 4);
+~spectrumSetRhythmNoteMapping.value(\perBand); // or \perSensor
+~spectrumSetRhythmBands.value([[0.05, 0.12], [0.12, 0.35], [0.35, 1.000001]]);
+~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42);
+~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110);
+~spectrumSetRhythmEnabled.value(true);
+~spectrumRhythmStatus.value;
+~spectrumRhythmResync.value;
+~spectrumRhythmPanic.value;
+```
+
+The bands and note tables are arrays in `~spectrumConfig` for live customization:
+`rhythmBands`, `rhythmBandNotes`, and `rhythmSensorNotes`.
+
+## Ableton Live 12 Intro
+
+In Audio MIDI Setup, enable IAC Driver and create both named buses. Keep the existing
+sustained instruments listening to Bus 3. Create separate drum or percussion tracks
+listening to Bus 4: channels 1–3 for spectrum banks and channels 4–16 for tracked
+voices. Example General MIDI-style mappings are kick 36, snare 38, closed hi-hat 42,
+and low tom 45. Ableton Live Intro can route each incoming channel to a separate track;
+use Monitor **In**, or **Auto** with the track armed.
+
+`~cwtRhythmResync` and `~spectrumRhythmResync` release current gates and immediately
+re-articulate active sources after an Ableton instrument change. They do not restart
+OSC reception, analysis state, audio synthesis, or the sustained Bus 3 notes.

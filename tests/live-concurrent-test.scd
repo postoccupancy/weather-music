@@ -3,6 +3,7 @@
 var root = thisProcess.nowExecutingPath.dirname.dirname;
 var check, controls = List.new, receiver, deadline, destination;
 var cwtMidi = List.new, spectrumMidi = List.new, packet, sendCwt;
+var cwtRhythm = List.new, spectrumRhythm = List.new;
 ~cwtAutoStart = false; ~spectrumAutoStart = false;
 (root +/+ "live-spectrum.scd").load;
 (root +/+ "live-cwt.scd").load;
@@ -10,6 +11,10 @@ var cwtMidi = List.new, spectrumMidi = List.new, packet, sendCwt;
 ~spectrumMidiEmit = { |out, type, channel, note=0, value=0| spectrumMidi.add([type, channel, note, value]) };
 ~cwtMidiOpen = { |device, port| [device, port] };
 ~cwtMidiEmit = { |out, type, channel, note=0, value=0| cwtMidi.add([type, channel, note, value]) };
+~cwtRhythmOpen = { |device, port| [device, port] };
+~cwtRhythmEmit = { |out, type, channel, note=0, value=0| cwtRhythm.add([type, channel, note, value]) };
+~spectrumRhythmOpen = { |device, port| [device, port] };
+~spectrumRhythmEmit = { |out, type, channel, note=0, value=0| spectrumRhythm.add([type, channel, note, value]) };
 check = { |condition, label|
     if(condition.not) {
         ("FAIL: " ++ label).postln; ~cwtStop.value; ~spectrumStop.value(true); s.quit; 1.exit
@@ -17,8 +22,10 @@ check = { |condition, label|
 };
 ~cwtConfig[\routerIP] = "127.0.0.1"; ~cwtConfig[\routerPort] = 50057;
 ~cwtConfig[\localPort] = 19002; ~cwtConfig[\masterVolume] = 0; ~cwtConfig[\diagnosticsInterval] = 60;
+~cwtConfig[\rhythmEnabled] = true;
 ~spectrumConfig[\routerIP] = "127.0.0.1"; ~spectrumConfig[\routerPort] = 50057;
 ~spectrumConfig[\localPort] = 19002; ~spectrumConfig[\masterGain] = 0; ~spectrumConfig[\diagnosticsSeconds] = 60;
+~spectrumConfig[\rhythmEnabled] = true;
 thisProcess.openUDPPort(50057);
 receiver = { |msg, time, addr, port| if(port == 50057) { controls.add(msg[0].asString) } };
 thisProcess.addOSCRecvFunc(receiver);
@@ -49,8 +56,13 @@ Routine({
     sendCwt.value; destination.sendMsg(*packet.value(35, 13)); destination.sendMsg(*packet.value); 0.6.wait;
     check.value(~cwtRun[\midiVoices].size == 4 and: { ~spectrumRun[\midiActive].notEmpty },
         "both sketches sustain MIDI concurrently");
+    check.value(~cwtRun[\rhythmConnected] and: { ~spectrumRun[\rhythmConnected] }
+        and: { ~cwtRun[\rhythmSources].size == 4 } and: { ~spectrumRun[\rhythmSources].size == 3 },
+        "both sketches maintain independent rhythm-bus sources");
     check.value(cwtMidi.every { |message| message[1] >= 3 }
-        and: { spectrumMidi.every { |message| message[1] <= 2 } }, "MIDI channel ownership is disjoint");
+        and: { spectrumMidi.every { |message| message[1] <= 2 } }
+        and: { cwtRhythm.every { |message| message[1] >= 3 } }
+        and: { spectrumRhythm.every { |message| message[1] <= 2 } }, "both MIDI buses preserve channel ownership");
     cwtReceiver = ~cwtRun[\receiver]; cwtNode = ~cwtRun[\synths].values.first[\synth].nodeID;
     cwtMidi.clear; spectrumMidi.clear; ~cwtMidiPanic.value; 0.02.wait;
     check.value(cwtMidi.notEmpty and: { cwtMidi.every { |message| message[1] >= 3 } }

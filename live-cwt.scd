@@ -2,6 +2,7 @@
    Live controls: edit ~cwtConfig[...] below or in the IDE; see README.md. */
 (
 if(~cwtStop.notNil) { ~cwtStop.value };
+(thisProcess.nowExecutingPath.dirname +/+ "midi-rhythm.scd").load;
 
 // One native router lease is shared by every Weather Music sketch in this sclang.
 if(~weatherLeaseAcquire.isNil) {
@@ -46,7 +47,8 @@ if(~weatherLeaseAcquire.isNil) {
 ~cwtConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
     maxPolyphony: 4, minConfidence: 0.0, masterVolume: 0.8,
-    pitchMode: \continuous, // \continuous, \midi (browser audio), \midiOutput (hysteresis)
+    pitchMode: \continuous, // \continuous or \quantized; legacy \midi / \midiOutput accepted
+    pitchHysteresis: 0.1,
     baseNote: 48.0, pitchSpan: 36.0,
     baseNoteOverrides: Dictionary.new, pitchSpanOverrides: Dictionary.new,
     waveform: \sine,
@@ -56,9 +58,14 @@ if(~weatherLeaseAcquire.isNil) {
     deviceFilter: nil, signalFilter: nil, // e.g. "indoor-sky", "temperature"
     frequencySmoothing: 0.18, amplitudeSmoothing: 0.35,
     releaseSmoothing: 0.6, releaseSeconds: 2.5,
-    midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
+    toneEnabled: true, midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
     midiBendRange: 2.0, midiExpressionFloor: 0.005, midiExpressionCeiling: 0.18,
     midiExpressionSmoothing: 0.2, midiExpressionDeadband: 1, midiNoteOnVelocity: 64,
+    rhythmEnabled: false, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
+    rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
+    rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 1.0,
+    rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
+    rhythmNotes: [36, 38, 42, 45],
     trafficTimeout: 15, diagnosticsInterval: 5
 );
 
@@ -70,9 +77,10 @@ if(~weatherLeaseAcquire.isNil) {
     var span = config[\pitchSpanOverrides][signal] ? config[\pitchSpan];
     var continuous = base + (position * span);
     var note = (continuous + 0.5).floor;
-    var mode = config[\pitchMode];
-    if((mode == \midiOutput) and: { previousNote.notNil }) {
-        if((continuous <= (previousNote + 0.6)) and: { continuous >= (previousNote - 0.6) }) {
+    var mode = config[\pitchMode], hysteresis = (config[\pitchHysteresis] ? 0.1).clip(0, 2);
+    if(([\quantized, \midiOutput].includes(mode)) and: { previousNote.notNil }) {
+        if((continuous <= (previousNote + 0.5 + hysteresis))
+            and: { continuous >= (previousNote - 0.5 - hysteresis) }) {
             note = previousNote;
         };
     };
@@ -122,7 +130,7 @@ if(~weatherLeaseAcquire.isNil) {
 ~cwtMidiConnect = { |run|
     var c = ~cwtConfig, error, destinations;
     ~cwtMidiPanicRun.value(run); run[\midiOut] = nil; run[\midiConnected] = false;
-    if(c[\midiEnabled]) {
+    if(c[\toneEnabled] and: { c[\midiEnabled] }) {
         try { run[\midiOut] = ~cwtMidiOpen.value(c[\midiDevice], c[\midiPort]) } { |caught| error = caught };
         if(run[\midiOut].notNil) {
             run[\midiConnected] = true; run[\midiError] = nil;
@@ -136,10 +144,29 @@ if(~weatherLeaseAcquire.isNil) {
         };
     } { run[\midiError] = "disabled" };
 };
+~cwtRhythmOpen = { |device, port| ~cwtMidiOpen.value(device, port) };
+~cwtRhythmEmit = { |out, type, channel, note=0, value=0| ~cwtMidiEmit.value(out, type, channel, note, value) };
+~cwtRhythmConnect = { |run|
+    var c = ~cwtConfig, error, destinations;
+    ~weatherRhythmPanic.value(run, (3..15), ~cwtRhythmEmit, false);
+    run[\rhythmOut] = nil; run[\rhythmConnected] = false;
+    if(c[\rhythmEnabled]) {
+        try { run[\rhythmOut] = ~cwtRhythmOpen.value(c[\rhythmMidiDevice], c[\rhythmMidiPort]) } { |caught| error = caught };
+        if(run[\rhythmOut].notNil) {
+            run[\rhythmConnected] = true; run[\rhythmError] = nil;
+            "Tracked rhythm connected: % / %.".format(c[\rhythmMidiDevice], c[\rhythmMidiPort]).postln;
+        } {
+            try { MIDIClient.init; destinations = MIDIClient.destinations.collect { |ep| ep.device.asString ++ " / " ++ ep.name.asString } } { };
+            run[\rhythmError] = if(error.notNil) { error.asString } { "destination not found" };
+            "Tracked rhythm unavailable: configured destination '% / %' could not be opened (%). Available destinations: %."
+                .format(c[\rhythmMidiDevice], c[\rhythmMidiPort], run[\rhythmError], destinations ? []).warn;
+        };
+    } { run[\rhythmError] = "disabled" };
+};
 ~cwtMidiUpdateVoice = { |run, voice, mapped, amplitude, now|
     var c = ~cwtConfig, entry = run[\midiVoices][voice[\key]], channel, used, note, delta, bend;
     var dt, alpha, smoothed, expression, range = (c[\midiBendRange] ? 2).max(0.01);
-    if(c[\midiEnabled] and: { run[\midiConnected] } and: { amplitude > 0 }) {
+    if(c[\toneEnabled] and: { c[\midiEnabled] } and: { run[\midiConnected] } and: { amplitude > 0 }) {
         if(entry.isNil) {
             used = run[\midiVoices].values.collect { |item| item[\channel] };
             channel = (3..15).detect { |candidate| used.includes(candidate).not };
@@ -262,7 +289,7 @@ if(~weatherLeaseAcquire.isNil) {
 };
 ~cwtSetMidiEnabled = { |enabled|
     if([true, false].includes(enabled)) {
-        ~cwtConfig[\midiEnabled] = enabled;
+        ~cwtConfig[\toneEnabled] = enabled; ~cwtConfig[\midiEnabled] = enabled;
         if(~cwtRun.notNil) {
             if(enabled) { ~cwtMidiConnect.value(~cwtRun) } {
                 ~cwtMidiPanicRun.value(~cwtRun); ~cwtRun[\midiOut] = nil;
@@ -270,6 +297,50 @@ if(~weatherLeaseAcquire.isNil) {
             };
         };
     } { "Tracked MIDI enabled must be true or false.".warn };
+};
+~cwtSetToneEnabled = ~cwtSetMidiEnabled;
+~cwtSetRhythmEnabled = { |enabled|
+    if([true, false].includes(enabled)) {
+        ~cwtConfig[\rhythmEnabled] = enabled;
+        if(~cwtRun.notNil) {
+            if(enabled) { ~cwtRhythmConnect.value(~cwtRun) } {
+                ~weatherRhythmPanic.value(~cwtRun, (3..15), ~cwtRhythmEmit, true);
+                ~cwtRun[\rhythmOut] = nil; ~cwtRun[\rhythmConnected] = false; ~cwtRun[\rhythmError] = "disabled";
+            };
+        };
+    } { "Tracked rhythm enabled must be true or false.".warn };
+};
+~cwtSetRhythmDestination = { |device, port|
+    if(device.notNil and: { port.notNil } and: { device.asString.notEmpty } and: { port.asString.notEmpty }) {
+        ~cwtConfig[\rhythmMidiDevice] = device.asString; ~cwtConfig[\rhythmMidiPort] = port.asString;
+        if(~cwtRun.notNil) { ~cwtRhythmConnect.value(~cwtRun) };
+    } { "Tracked rhythm destination requires nonempty device and port names.".warn };
+};
+~cwtSetRhythmRate = { |minimum=0.5, maximum=4.0|
+    if(minimum.isNumber and: { maximum.isNumber } and: { minimum > 0 } and: { maximum >= minimum }) {
+        ~cwtConfig[\rhythmPulseMinHz] = minimum; ~cwtConfig[\rhythmPulseMaxHz] = maximum;
+    } { "Tracked rhythm rates require 0 < minimum <= maximum.".warn };
+};
+~cwtSetRhythmPulse = { |duration=0.08, velocityMin=35, velocityMax=110|
+    if(duration.isNumber and: { duration > 0 } and: { duration <= 2 }
+        and: { velocityMin.isInteger } and: { velocityMax.isInteger }
+        and: { velocityMin >= 1 } and: { velocityMax >= velocityMin } and: { velocityMax <= 127 }) {
+        ~cwtConfig[\rhythmPulseDuration] = duration; ~cwtConfig[\rhythmVelocityMin] = velocityMin;
+        ~cwtConfig[\rhythmVelocityMax] = velocityMax;
+    } { "Invalid tracked rhythm duration or velocity bounds.".warn };
+};
+~cwtSetRhythmVelocity = { |inputFloor=0, inputCeiling=1, velocityMin=35, velocityMax=110|
+    if(inputFloor.isNumber and: { inputCeiling.isNumber } and: { inputFloor >= 0 } and: { inputCeiling > inputFloor }
+        and: { velocityMin.isInteger } and: { velocityMax.isInteger }
+        and: { velocityMin >= 1 } and: { velocityMax >= velocityMin } and: { velocityMax <= 127 }) {
+        ~cwtConfig[\rhythmVelocityInputFloor] = inputFloor; ~cwtConfig[\rhythmVelocityInputCeiling] = inputCeiling;
+        ~cwtConfig[\rhythmVelocityMin] = velocityMin; ~cwtConfig[\rhythmVelocityMax] = velocityMax;
+    } { "Invalid tracked rhythm velocity mapping.".warn };
+};
+~cwtSetRhythmNotes = { |notes|
+    if(notes.isArray and: { notes.notEmpty } and: { notes.every { |note| note.isInteger and: { note >= 0 } and: { note <= 127 } } }) {
+        ~cwtConfig[\rhythmNotes] = notes.copy;
+    } { "Tracked rhythm notes require a nonempty MIDI-note array.".warn };
 };
 ~cwtSetMidiDestination = { |device, port|
     if(device.notNil and: { port.notNil } and: { device.asString.notEmpty } and: { port.asString.notEmpty }) {
@@ -305,15 +376,23 @@ if(~weatherLeaseAcquire.isNil) {
         "Tracked MIDI resynced on channels 4-16.".postln;
     } { "Tracked MIDI resync requires a running, connected, enabled MIDI output.".warn };
 };
+~cwtRhythmPanic = { ~weatherRhythmPanic.value(~cwtRun, (3..15), ~cwtRhythmEmit, false) };
+~cwtRhythmResync = {
+    if(~cwtRun.notNil and: { ~cwtRun[\rhythmConnected] }) {
+        ~weatherRhythmResync.value(~cwtRun, Main.elapsedTime, ~cwtConfig, ~cwtRhythmEmit)
+    } { "Tracked rhythm resync requires a connected rhythm output.".warn };
+};
 
 ~cwtStop = {
     var run = ~cwtRun;
     if(run.notNil) {
         run[\running] = false;
         ~cwtMidiPanicRun.value(run);
+        ~weatherRhythmPanic.value(run, (3..15), ~cwtRhythmEmit, true);
         ~weatherLeaseRelease.value(\cwt, run[\leaseKey]);
         if(run[\receiver].notNil) { thisProcess.removeOSCRecvFunc(run[\receiver]) };
         run[\tick].tryPerform(\stop);
+        run[\rhythmTick].tryPerform(\stop);
         run[\startup].tryPerform(\stop);
         CmdPeriod.remove(run[\onStop]);
         ServerQuit.remove(run[\onQuit]);
@@ -335,9 +414,11 @@ if(~weatherLeaseAcquire.isNil) {
     run = (running: true, router: NetAddr(config[\routerIP], config[\routerPort]),
         port: config[\localPort], voices: Dictionary.new, streams: Dictionary.new,
         synths: Dictionary.new, midiVoices: Dictionary.new, midiOut: nil,
-        midiConnected: false, midiError: nil, lastDiagnostic: 0);
+        midiConnected: false, midiError: nil, rhythmOut: nil, rhythmConnected: false,
+        rhythmError: nil, rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, lastDiagnostic: 0);
     ~cwtRun = run;
     ~cwtMidiConnect.value(run);
+    ~cwtRhythmConnect.value(run);
     clearStream = { |stream|
         run[\voices].keys.asArray.do { |key|
             if(run[\voices][key][\stream] == stream) { run[\voices].removeAt(key) };
@@ -398,6 +479,7 @@ if(~weatherLeaseAcquire.isNil) {
     };
     reconcile = {
         var now = Main.elapsedTime, candidates, selected, selectedKeys, counts = Dictionary.new;
+        var rhythmDesired = Dictionary.new, rhythmUsed = Set.new;
         var threshold = config[\minConfidence], releasing;
         if(threshold.isNumber.not or: { threshold.isNaN } or: { threshold < 0 } or: { threshold > 1 }) { threshold = 0 };
         run[\streams].keys.asArray.do { |stream|
@@ -416,6 +498,7 @@ if(~weatherLeaseAcquire.isNil) {
         candidates.do { |voice| counts[voice[\device]] = (counts[voice[\device]] ? 0) + 1 };
         selected = ~cwtSelect.value(candidates, run[\synths], config[\maxPolyphony].asInteger.max(0));
         selectedKeys = selected.collect { |voice| voice[\key] };
+        selectedKeys.do { |key| var source = run[\rhythmSources][key]; if(source.notNil) { rhythmUsed.add(source[\channel]) } };
         run[\midiVoices].keys.asArray.do { |key|
             if(selectedKeys.includesEqual(key).not) { ~cwtMidiRelease.value(run, key) };
         };
@@ -457,7 +540,20 @@ if(~weatherLeaseAcquire.isNil) {
                 entry[\amp] = amp; entry[\waveform] = config[\waveform]; entry[\muted] = muted;
             };
             ~cwtMidiUpdateVoice.value(run, voice, mapped, amp, now);
+            if(config[\rhythmEnabled] and: { muted.not } and: { amp > 0 }) {
+                var rhythm = run[\rhythmSources][key], channel, notes = config[\rhythmNotes] ? [36,38,42,45];
+                channel = if(rhythm.notNil) { rhythm[\channel] } {
+                    (3..15).detect { |candidate| rhythmUsed.includes(candidate).not }
+                };
+                if(channel.notNil) {
+                    rhythmUsed.add(channel);
+                    rhythmDesired[key] = (key: key, channel: channel,
+                        note: notes.wrapAt(channel - 3).asInteger.clip(0, 127), sourceHz: voice[\frequency],
+                        level: (amp / 0.18).clip(0, 1), confidence: voice[\confidence], signal: signal);
+                };
+            };
         };
+        ~weatherRhythmSync.value(run, rhythmDesired, now, config, ~cwtRhythmEmit);
         releasing = run[\synths].values.count { |entry| entry[\releasing] };
         run[\eligibleCount] = candidates.size; run[\selectedCount] = selected.size;
         run[\releasingCount] = releasing;
@@ -502,6 +598,9 @@ if(~weatherLeaseAcquire.isNil) {
                         thisProcess.addOSCRecvFunc(receive);
                         run[\leaseKey] = ~weatherLeaseAcquire.value(\cwt, run[\router], run[\port]);
                         run[\tick] = Routine({ loop { reconcile.value; 0.1.wait } }).play(SystemClock);
+                        run[\rhythmTick] = Routine({ loop {
+                            ~weatherRhythmStep.value(run, Main.elapsedTime, config, ~cwtRhythmEmit); 0.02.wait
+                        } }).play(SystemClock);
                         "CWT running: %:% -> UDP %, hardware outputs %–%".format(
                             config[\routerIP], config[\routerPort], run[\port], resolved + 1, resolved + 2).postln;
                     } { "Cannot open CWT receive port".warn; stop.value };
@@ -535,6 +634,21 @@ if(~weatherLeaseAcquire.isNil) {
                 .format(if(voice.notNil) { voice[\id] } { key }, entry[\frequency].round(0.000001),
                     entry[\continuousMidi].round(0.0001), entry[\note], entry[\channel] + 1,
                     entry[\bend], entry[\expression]).postln;
+        };
+    };
+};
+~cwtRhythmStatus = {
+    var run = ~cwtRun, c = ~cwtConfig;
+    if(run.isNil) { "Tracked rhythm: stopped enabled=% destination='% / %'".format(
+        c[\rhythmEnabled], c[\rhythmMidiDevice], c[\rhythmMidiPort]).postln } {
+        "Tracked rhythm: enabled=% connected=% destination='% / %' sources=% gates=% error=%".format(
+            c[\rhythmEnabled], run[\rhythmConnected], c[\rhythmMidiDevice], c[\rhythmMidiPort],
+            run[\rhythmSources].size, run[\rhythmGates].size, run[\rhythmError]).postln;
+        run[\rhythmSources].keys.asArray.sort.do { |key| var source = run[\rhythmSources][key];
+            "  source=% envHz=% pulseHz=% bpm=% confidence=% channel=% note=% phase=%".format(
+                key, source[\sourceHz].round(0.000001), source[\rateHz].round(0.001),
+                (source[\rateHz] * 60).round(0.1), source[\confidence].round(0.01),
+                source[\channel] + 1, source[\note], source[\phase].round(0.001)).postln;
         };
     };
 };

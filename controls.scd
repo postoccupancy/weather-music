@@ -8,8 +8,8 @@ contains mutually exclusive examples such as mute/unmute and stop/start.
 
 // LIFECYCLE — evaluate one line, then wait for completion before reloading
 ~cwtStop.value;
-~spectrumStop.value; // normal spectrum fade
 ~cwtStart.value;
+~spectrumStop.value; // normal spectrum fade
 ~spectrumStart.value;
 
 // AUDIO OUTPUT ROUTING — zero-based hardware output bus indices
@@ -42,6 +42,30 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtMidiPanic.value;
 ~cwtMidiResync.value;                        // resend sustained notes after changing instruments
 
+// RHYTHMIC MIDI — disabled by default; separate IAC bus, no global tempo/grid
+~cwtSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
+~cwtSetRhythmEnabled.value(true);
+~cwtSetRhythmRate.value(0.5, 4.0);            // slowest/fastest mapped pulse rates in Hz
+~cwtSetRhythmPulse.value(0.08, 35, 110);      // duration seconds, velocity minimum/maximum
+~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110);// amplitude input range, MIDI output range
+~cwtSetRhythmNotes.value([36, 38, 42, 45]);   // deterministic channel-slot notes
+~cwtRhythmStatus.value;
+~cwtRhythmResync.value;
+~cwtRhythmPanic.value;
+
+~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
+~spectrumSetRhythmEnabled.value(true);
+~spectrumSetRhythmRate.value(0.5, 4.0);
+~spectrumSetRhythmPulse.value(0.08, 35, 110);
+~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110); // significance input and MIDI ranges
+~spectrumSetRhythmSelection.value(\perBand, 3); // or \topN with count 1..48
+~spectrumSetRhythmNoteMapping.value(\perBand);  // or \perSensor
+~spectrumSetRhythmBands.value([[0.05, 0.12], [0.12, 0.35], [0.35, 1.000001]]);
+~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42); // band notes, then sensor notes
+~spectrumRhythmStatus.value;
+~spectrumRhythmResync.value;
+~spectrumRhythmPanic.value;
+
 // DIAGNOSTICS
 ~cwtStatus.value;
 ~spectrumStatus.value;
@@ -50,9 +74,10 @@ MIDIClient.init; MIDIClient.destinations.postln;
 // TRACKED VOICES — selection, pitch, waveform, and master
 ~cwtConfig[\maxPolyphony] = 144;               // default 4; nonnegative hard ceiling
 ~cwtSetMinConfidence.value(0.0);             // default 0; valid 0..1
-~cwtConfig[\pitchMode] = \continuous;        // default; also \midi or \midiOutput
+~cwtConfig[\pitchMode] = \continuous;        // default; or \quantized
+~cwtConfig[\pitchHysteresis] = 0.1;           // quantized semitone margin; selection is unchanged
 ~cwtSetBaseNote.value(24);                   // default 48; MIDI coordinate 24..72
-~cwtSetPitchSpan.value(36);                  // default 36; 12..72 semitones
+~cwtSetPitchSpan.value(16);                  // default 36; 12..72 semitones
 ~cwtSetBaseNote.value(36, \temperature);     // set optional sensor override
 ~cwtSetBaseNote.value(nil, \temperature);    // clear optional sensor override
 ~cwtSetPitchSpan.value(24, \temperature);    // set optional sensor override

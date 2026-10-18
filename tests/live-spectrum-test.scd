@@ -1,9 +1,11 @@
 (
-var check, packet, dest, st, controls = List.new, midi = List.new, receiver, midiCount;
+var check, packet, dest, st, controls = List.new, midi = List.new, receiver, midiCount, rhythm = List.new;
 ~spectrumAutoStart = false;
 (thisProcess.nowExecutingPath.dirname.dirname +/+ "live-spectrum.scd").load;
 ~spectrumMidiOpen = { |device, port| [device, port] };
 ~spectrumMidiEmit = { |out, type, channel, note=0, value=0| midi.add([type, channel, note, value]) };
+~spectrumRhythmOpen = { |device, port| [device, port] };
+~spectrumRhythmEmit = { |out, type, channel, note=0, value=0| rhythm.add([type, channel, note, value]) };
 midiCount = { |type| midi.count { |message| message[0] == type } };
 check = { |ok, label| if(ok.not) { ("FAIL: " ++ label).postln; ~spectrumStop.value(true); s.quit; 1.exit } { ("PASS: " ++ label).postln } };
 check.value((~spectrumFactor.value(\humidity).reciprocal - 3.098).abs < 0.01, "RH derivative");
@@ -22,6 +24,7 @@ check.value(((1.0 - 1.0.floor).abs > 0).not, "frame integral");
 ~spectrumConfig[\routerIP] = "127.0.0.1"; ~spectrumConfig[\routerPort] = 50056;
 ~spectrumConfig[\localPort] = 19000; ~spectrumConfig[\masterGain] = 0; ~spectrumConfig[\diagnosticsSeconds] = 60;
 ~spectrumConfig[\shutdownSeconds] = 0.1;
+~spectrumConfig[\rhythmEnabled] = true; ~spectrumConfig[\rhythmPulseMinHz] = 10; ~spectrumConfig[\rhythmPulseMaxHz] = 10;
 s.options.outDevice = "BlackHole 16ch"; s.options.numInputBusChannels = 0; s.options.numOutputBusChannels = 16;
 thisProcess.openUDPPort(50056);
 receiver = { |m, time, sender, port| if(port == 50056) { controls.add(m[0].asString) } };
@@ -38,6 +41,10 @@ Routine({
     run = ~spectrumRun; st = run[\streams]["/osc/indoor-sky/temperature/cwt/spectrum"]; node = st[\synth].nodeID;
     0.2.wait; check.value(controls.includesEqual("/router/subscribe"), "UDP subscription");
     check.value(run[\midiConnected] and: { run[\midiOut] == ["IAC Driver", "Bus 3 - Ableton Live"] }, "default MIDI destination initializes");
+    ~spectrumRhythmOpen = { nil }; ~spectrumRhythmConnect.value(run);
+    check.value(run[\rhythmConnected].not and: { run[\midiConnected] },
+        "missing spectrum rhythm destination does not disrupt sustained tones");
+    ~spectrumRhythmOpen = { |device, port| [device, port] }; ~spectrumRhythmConnect.value(run);
     check.value(run[\activeOutputBus] == 2 and: { run[\routingState] == \ready }, "16-output startup assigns spectrum bus 2");
     check.value(run[\bus].index >= 16 and: { run[\output].notNil }
         and: { run[\streams].values.every { |bank| bank[\synth].notNil } }, "banks feed a private bus and output synth");
@@ -55,6 +62,9 @@ Routine({
     dest.sendMsg(*packet.value(1)); 0.4.wait;
     check.value(st[\ready] and: { st[\rows].size == 48 }, "reverse chunk reassembly");
     check.value((st[\targets][0] - 0.002).abs < 1e-7, "default significance target uses magnitude and background power");
+    check.value(run[\rhythmSources].size == 3
+        and: { run[\rhythmSources].values.collect { |source| source[\note] }.asSet == Set[36,38,42] }
+        and: { rhythm.any { |message| message[0] == \noteOn } }, "default per-band spectrum rhythm emits three mapped pulses");
     check.value(run[\midiActive].size == 48 and: { midiCount.value(\noteOn) == 48 }
         and: { midiCount.value(\polyTouch) == 48 }, "48-semitone mapping starts 48 held notes with aftertouch");
     check.value(midi.every { |message| message[1] <= 2 }, "spectrum MIDI owns only channels 1-3");
@@ -81,6 +91,7 @@ Routine({
     ~spectrumSetMidiChannel.value(\temperature, 1); 0.4.wait;
     midi.clear; ~spectrumSetMidiEnabled.value(false); 0.3.wait;
     check.value(run[\midiActive].isEmpty and: { midiCount.value(\allNotesOff) > 0 }, "explicit MIDI disable releases all notes");
+    check.value(run[\rhythmSources].notEmpty, "spectrum rhythm remains active when sustained tone is disabled");
     ~spectrumSetMidiEnabled.value(true); 0.4.wait;
     check.value(run[\midiConnected] and: { run[\midiActive].notEmpty }, "MIDI re-enable reconnects and resumes held spectrum");
     midi.clear; ~spectrumSetGain.value(\temperature, 2); 0.5.wait;
@@ -156,11 +167,15 @@ Routine({
     midi.clear; dest.sendMsg("/osc/indoor-sky/temperature/cwt/spectrum", 3, "epoch-b", 3.0, 123.0, 0, "coverage", 0, 0, 0); 0.4.wait;
     check.value(st[\ready].not and: { st[\targets].sum == 0 }, "invalidation");
     check.value(midiCount.value(\noteOff) > 0, "invalid frame releases sustained MIDI notes");
+    check.value(run[\rhythmSources].keys.every { |key| key.beginsWith("temperature/").not },
+        "invalid frame removes its spectrum rhythmic sources");
     dest.sendMsg(*packet.value(2, 0, 48, "epoch-b")); 0.1.wait; check.value(st[\ready].not, "older ignored");
     dest.sendMsg(*packet.value(4, 0, 48, "epoch-b")); 0.3.wait;
     midi.clear; ~spectrumConfig[\staleTimeoutSeconds] = 0.1; 0.4.wait;
     check.value(st[\reason] == "timeout" and: { st[\targets].sum == 0 }, "timeout");
     check.value(midiCount.value(\noteOff) > 0, "stale streams release sustained MIDI notes");
+    check.value(run[\rhythmSources].keys.every { |key| key.beginsWith("temperature/").not },
+        "stale stream removes spectrum rhythmic sources");
     dest.sendMsg(*packet.value(5, 0, 47, "epoch-b", 0.01, 47)); 0.3.wait;
     check.value(st[\reason] == "unsupported-scale-count", "different scale count");
     while { controls.includesEqual("/router/heartbeat").not and: { Main.elapsedTime < (deadline+10) } } { 0.1.wait };
@@ -170,6 +185,8 @@ Routine({
     check.value(~spectrumRun.isNil and: { controls.includesEqual("/router/unsubscribe") }, "stop cleanup");
     check.value(midiCount.value(\allNotesOff) > 0 and: { midi.every { |message| message[1] <= 2 } },
         "stop sends MIDI panic only on spectrum channels");
+    check.value(rhythm.any { |message| message[0] == \allNotesOff }
+        and: { rhythm.every { |message| message[1] <= 2 } }, "stop cleans rhythm bus only on spectrum channels");
     ~spectrumMidiOpen = { |device, port| nil };
     ~spectrumStart.value; 0.5.wait; check.value(~spectrumRun[\receiver].notNil, "restart");
     check.value(~spectrumRun[\midiConnected].not and: { ~spectrumRun[\midiError].notNil }, "missing default destination reports connection failure");

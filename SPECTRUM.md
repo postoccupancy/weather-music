@@ -5,6 +5,9 @@ humidity, and pressure as three persistent oscillator banks. It can run alongsid
 `live-cwt.scd`; both sketches reference-count one native OSC lease, and stopping one
 keeps the lease alive until the other stops.
 
+See [RHYTHM.md](RHYTHM.md) for the optional phase-accumulated Bus 4 pulse output,
+scale selection, percussion note mappings, and Ableton routing.
+
 Evaluate the entire `live-spectrum.scd` file. It starts automatically. The public
 controls are:
 
@@ -248,6 +251,8 @@ virtual synthesizer is required. It verifies default connection attempts and cle
 failure state, 36/48/60-semitone mappings, collision aggregation, sensor channels,
 polyphonic aftertouch, live channel and pitch remapping, explicit disable/re-enable,
 mode/gain/mute changes, invalid and stale frame note-offs, panic, and stop cleanup.
+`tests/spectrum-rhythm-selection-test.scd` deterministically verifies per-band and
+top-N selection, per-band/per-sensor notes, mute, and readiness without a MIDI device.
 
 For Windows, stop the old sketch, evaluate `~cwtStop.value` if it is loaded, then
 evaluate all of `live-spectrum.scd`. Within a few analysis cycles:

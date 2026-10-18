@@ -3,11 +3,15 @@
 (
 var root = thisProcess.nowExecutingPath.dirname.dirname;
 var check, destination, sendVoice, sendState, controls = List.new, controlReceiver, midi = List.new, midiCount;
+var rhythm = List.new, rhythmCount;
 ~cwtAutoStart = false;
 (root +/+ "live-cwt.scd").load;
 ~cwtMidiOpen = { |device, port| [device, port] };
 ~cwtMidiEmit = { |out, type, channel, note=0, value=0| midi.add([type, channel, note, value]) };
+~cwtRhythmOpen = { |device, port| [device, port] };
+~cwtRhythmEmit = { |out, type, channel, note=0, value=0| rhythm.add([type, channel, note, value]) };
 midiCount = { |type| midi.count { |message| message[0] == type } };
+rhythmCount = { |type| rhythm.count { |message| message[0] == type } };
 check = { |condition, label|
     if(condition.not) { ("FAIL: " ++ label).postln; ~cwtStop.value; s.quit; 1.exit } { ("PASS: " ++ label).postln };
 };
@@ -17,6 +21,13 @@ check.value((~cwtMapPitch.value(0.1371254, ~cwtConfig)[\hz] - 261.6255653006).ab
 ~cwtConfig[\pitchMode] = \midiOutput;
 check.value(~cwtMapPitch.value(0.1371254, ~cwtConfig, 60)[\note] == 60, "MIDI hysteresis holds");
 check.value(~cwtMapPitch.value(0.5, ~cwtConfig, 60)[\note] == 76, "MIDI hysteresis crosses");
+~cwtConfig[\pitchMode] = \quantized; ~cwtConfig[\pitchHysteresis] = 0.1;
+check.value(~cwtMapPitch.value(0.05 * (20 ** (12.55/36)), ~cwtConfig, 60)[\note] == 60,
+    "quantized pitch uses configurable hysteresis margin");
+~cwtConfig[\pitchHysteresis] = 0;
+check.value(~cwtMapPitch.value(0.05 * (20 ** (12.55/36)), ~cwtConfig, 60)[\note] == 61,
+    "zero pitch hysteresis changes at nearest-note boundary");
+~cwtConfig[\pitchHysteresis] = 0.1;
 ~cwtConfig[\pitchMode] = \continuous;
 ~cwtSetBaseNote.value(60, \temperature); ~cwtSetPitchSpan.value(24, \temperature);
 check.value((~cwtMapPitch.value(0.05, ~cwtConfig, nil, \temperature)[\hz] - 60.midicps).abs < 1e-8, "sensor base-note override");
@@ -28,6 +39,7 @@ check.value((~cwtMapPitch.value(0.05, ~cwtConfig, nil, \temperature)[\hz] - 48.m
 ~cwtConfig[\localPort] = 19001;
 ~cwtConfig[\masterVolume] = 0;
 ~cwtConfig[\diagnosticsInterval] = 60;
+~cwtConfig[\rhythmEnabled] = true; ~cwtConfig[\rhythmPulseMinHz] = 10; ~cwtConfig[\rhythmPulseMaxHz] = 10;
 check.value(thisProcess.openUDPPort(50055), "fixture control port opens");
 controlReceiver = { |msg, time, addr, port| if(port == 50055) { controls.add(msg[0].asString) } };
 thisProcess.addOSCRecvFunc(controlReceiver);
@@ -46,6 +58,10 @@ Routine({
     check.value(~cwtRun[\receiver].notNil, "instrument started");
     check.value(~cwtConfig[\midiEnabled] and: { ~cwtRun[\midiConnected] }
         and: { ~cwtRun[\midiOut] == ["IAC Driver", "Bus 3 - Ableton Live"] }, "tracked MIDI initializes by default");
+    ~cwtRhythmOpen = { nil }; ~cwtRhythmConnect.value(~cwtRun);
+    check.value(~cwtRun[\rhythmConnected].not and: { ~cwtRun[\midiConnected] },
+        "missing rhythm destination does not disrupt sustained tone MIDI");
+    ~cwtRhythmOpen = { |device, port| [device, port] }; ~cwtRhythmConnect.value(~cwtRun);
     ~cwtMidiOpen = { nil }; ~cwtMidiConnect.value(~cwtRun);
     check.value(~cwtRun[\midiConnected].not and: { ~cwtRun[\midiError].notNil }, "unavailable destination records a clear failure");
     ~cwtMidiOpen = { |device, port| [device, port] }; ~cwtMidiConnect.value(~cwtRun);
@@ -62,6 +78,17 @@ Routine({
         ~cwtRun[\midiVoices].values.collect { |entry| entry[\channel] }.asSet == Set[3,4,5,6]
     }, "selected voices receive deterministic independent channels");
     check.value(midiCount.value(\noteOn) == 4 and: { midiCount.value(\touch) >= 4 }, "new voices send notes and initial channel pressure");
+    check.value(~cwtRun[\rhythmSources].size == 4
+        and: { ~cwtRun[\rhythmSources].values.collect { |source| source[\note] }.asSet == Set[36,38,42,45] }
+        and: { rhythmCount.value(\noteOn) > 0 }, "tracked rhythm pulses independently on configured notes");
+    ~cwtSetToneEnabled.value(false); 0.15.wait;
+    check.value(~cwtRun[\midiVoices].isEmpty and: { ~cwtRun[\rhythmSources].size == 4 },
+        "tracked rhythm continues with sustained tone disabled");
+    ~cwtSetToneEnabled.value(true); 0.15.wait;
+    ~cwtSetRhythmEnabled.value(false); 0.15.wait;
+    check.value(~cwtRun[\rhythmSources].isEmpty and: { ~cwtRun[\midiVoices].size == 4 },
+        "sustained tone continues with tracked rhythm disabled");
+    ~cwtSetRhythmEnabled.value(true); 0.15.wait;
     check.value(midi.every { |message| message[1] >= 3 }, "tracked MIDI owns only channels 4-16");
     midi.clear; ~cwtMidiResync.value; 0.05.wait;
     check.value([\noteOff, \allNotesOff, \bend, \noteOn, \touch].every { |type| midiCount.value(type) > 0 }
@@ -89,6 +116,7 @@ Routine({
     check.value(~cwtRun[\synths]["fixture/temperature/1"][\amp] == 0
         and: { ~cwtRun[\selectedCount] == 4 }, "mute silences without changing selection");
     check.value(~cwtRun[\midiVoices].isEmpty, "mute releases tracked MIDI notes");
+    check.value(~cwtRun[\rhythmSources].isEmpty, "mute removes tracked rhythmic sources");
     ~cwtMute.value(\temperature, false); ~cwtSetGain.value(\temperature, 1); 0.3.wait;
     check.value(~cwtRun[\midiVoices].size == 4, "unmute deterministically reallocates MIDI channels");
     ~cwtSetWaveform.value(\triangle); 0.3.wait; s.sync;
@@ -115,6 +143,7 @@ Routine({
     check.value(~cwtRun[\synths].size == 4, "steal reserves slot during release");
     2.7.wait;
     check.value(~cwtRun[\synths]["fixture/temperature/5"].notNil, "higher confidence admitted after release");
+    check.value(~cwtRun[\rhythmSources]["fixture/temperature/5"].notNil, "tracker replacement transfers rhythmic source ownership");
     sendVoice.value(1, 0.8, 0, 0.5, 2000);
     0.3.wait;
     check.value(~cwtRun[\synths]["fixture/temperature/1"][\releasing], "inactive packet releases");
@@ -136,6 +165,7 @@ Routine({
     0.4.wait;
     check.value(~cwtRun[\synths]["fixture/rms/1"][\releasing], "silence watchdog releases voices");
     check.value(~cwtRun[\midiVoices].isEmpty, "silence watchdog releases MIDI voices");
+    check.value(~cwtRun[\rhythmSources].isEmpty, "silence watchdog removes rhythmic sources");
     4.wait;
     check.value(controls.includesEqual("/router/heartbeat"), "native heartbeat received");
     ~cwtStop.value; ~cwtStop.value;
@@ -144,6 +174,8 @@ Routine({
     check.value(~cwtRun.isNil, "stop is idempotent");
     check.value(midiCount.value(\allNotesOff) > 0 and: { midi.every { |message| message[1] >= 3 } },
         "stop sends MIDI panic only on tracked channels");
+    check.value(rhythmCount.value(\allNotesOff) > 0 and: { rhythm.every { |message| message[1] >= 3 } },
+        "stop cleans rhythm bus only on tracked channels");
     ~cwtStart.value;
     0.5.wait;
     nextRun = ~cwtRun;
