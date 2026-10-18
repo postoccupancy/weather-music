@@ -24,7 +24,9 @@ includes mutually exclusive examples such as mute/unmute and stop/start.
    mismatches. It does not change an already-running server's audio configuration.
 3. Look for `CWT running`. Ready active voices should appear in diagnostics within
    five seconds of the router's snapshot. Defaults are the browser's continuous
-   pitch mapping and volume 0.8. No clicks or MIDI permissions are required.
+   pitch mapping and volume 0.8. Tracked MIDI also connects automatically to
+   `IAC Driver / Bus 3 - Ableton Live`; a missing destination produces a diagnostic
+   listing the available destinations while audio continues normally.
 4. Evaluate `~cwtStop.value;` to release this sketch's lease ownership and free its
    group, synths, receive callback and update routine. The router is unsubscribed
    only when the last Weather Music owner stops. Command-period also cleans up.
@@ -60,6 +62,41 @@ Change these live in the IDE; updates take effect on the next 100 ms control tic
 ~cwtConfig[\frequencySmoothing] = 0.18; // exponential time constant, seconds
 ~cwtConfig[\amplitudeSmoothing] = 0.35;
 ```
+
+### Tracked-voice MIDI and Ableton Live 12
+
+Tracked MIDI is enabled by default and follows the same selected tracker identities,
+pitch mapping, confidence normalization, sensor gain, and mute state as the audio
+instrument. It does not use the full-spectrum amplitude targets. Each active tracker
+gets the lowest free MIDI channel from channels 2–16, up to `maxPolyphony`; channel 1
+is reserved as the conventional MPE master channel. Its nearest MIDI note is held
+while ordinary channel pitch bend carries the fractional pitch. If motion exceeds
+the configured bend range, the sender releases and rebases that one note on the same
+channel. Other voices are unaffected. Channel pressure carries the smoothed effective
+amplitude (defaults: floor 0.005, ceiling 0.18, smoothing 0.2 seconds, deadband 1).
+
+In Audio MIDI Setup, enable the IAC Driver and create `Bus 3 - Ableton Live`. In
+Ableton Live 12, enable that port for Track input, receive all channels, and use an
+MPE-compatible instrument with its pitch-bend range set to **±2 semitones**. This is
+MPE-style channel allocation: the messages are standard per-channel note, pitch bend,
+and channel pressure messages. A non-MPE instrument must still preserve incoming MIDI
+channels and respond to channel pressure for independent bends and expression.
+
+```supercollider
+~cwtSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
+~cwtSetMidiEnabled.value(true);       // false releases held notes
+~cwtSetMidiBendRange.value(2);        // 0.25..24; match the Ableton instrument
+~cwtSetMidiExpression.value(0.005, 0.18, 0.2, 1, 64);
+~cwtMidiStatus.value;                 // tracker, Hz, coordinate, note, channel, bend, expression
+~cwtMidiPanic.value;                  // note-offs, bend resets, all-notes-off
+```
+
+MIDI initialization happens before audio-server boot and expression does not include
+`masterVolume`, so MIDI output is independent of the SuperCollider output level and
+hardware bus. Stop, restart, Cmd-period, timeout, unready streams, deselection, and
+mute all release held notes and reset their channels. Changing the destination or
+bend range also panics first. Full-spectrum MIDI configuration and behavior are
+unchanged.
 
 Other controls: `baseNote` (48), `pitchSpan` (36 semitones), `releaseSmoothing` (0.6 s),
 `releaseSeconds` (2.5 s), `trafficTimeout` (15 s), `diagnosticsInterval` (5 s).
@@ -120,7 +157,8 @@ With SuperCollider installed, run the native local fixture test:
 It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi
 subscription), and tests mapping, confidence/polyphony selection, sensor gain/mute,
 waveforms, output fallback, node continuity, release, readiness, ID reuse,
-heartbeat, timeout and repeated cleanup. `tests/live-concurrent-test.scd` verifies
+heartbeat, timeout, independent bends, note rebasing, expression, MIDI cleanup, and
+repeated cleanup. `tests/live-concurrent-test.scd` verifies
 both instruments share a lease and that stopping one does not unsubscribe the other.
 `tests/controls-test.scd` executes the control panel against API spies to catch
 syntax errors and stale command names without starting audio or contacting the router.

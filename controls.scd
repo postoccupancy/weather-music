@@ -32,6 +32,15 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumMidiStatus.value;
 ~spectrumMidiPanic.value;                      // note-offs plus all-notes-off
 
+// TRACKED-VOICE MIDI — enabled by default; channels 2–16 are allocated per tracker
+~cwtSetMidiDestination.value("IAC Driver", "Bus 3 - Ableton Live");
+~cwtSetMidiEnabled.value(true);                // false releases notes and disables MIDI
+~cwtSetMidiBendRange.value(2);                 // match the Ableton instrument: ±2 semitones
+~cwtSetMidiExpression.value(0.005, 0.18, 0.2, 1, 64);
+// Arguments: effective-amplitude floor/ceiling, smoothing seconds, deadband, velocity
+~cwtMidiStatus.value;
+~cwtMidiPanic.value;
+
 // DIAGNOSTICS
 ~cwtStatus.value;
 ~spectrumStatus.value;

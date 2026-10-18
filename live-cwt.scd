@@ -56,6 +56,9 @@ if(~weatherLeaseAcquire.isNil) {
     deviceFilter: nil, signalFilter: nil, // e.g. "indoor-sky", "temperature"
     frequencySmoothing: 0.18, amplitudeSmoothing: 0.35,
     releaseSmoothing: 0.6, releaseSeconds: 2.5,
+    midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
+    midiBendRange: 2.0, midiExpressionFloor: 0.005, midiExpressionCeiling: 0.18,
+    midiExpressionSmoothing: 0.2, midiExpressionDeadband: 1, midiNoteOnVelocity: 64,
     trafficTimeout: 15, diagnosticsInterval: 5
 );
 
@@ -83,6 +86,96 @@ if(~weatherLeaseAcquire.isNil) {
         \triangle, { (mix: 1.0, width: 0.5, level: 0.8) },
         \saw, { (mix: 1.0, width: 0.001, level: 0.55) },
         { nil })
+};
+
+// Kept behind two functions so tests can use a recorder without a MIDI device.
+~cwtMidiOpen = { |device, port|
+    var out;
+    MIDIClient.init; out = MIDIOut.newByName(device.asString, port.asString); out.latency = 0; out
+};
+~cwtMidiEmit = { |out, type, channel, note=0, value=0|
+    switch(type,
+        \noteOn, { out.noteOn(channel, note, value) }, \noteOff, { out.noteOff(channel, note, value) },
+        \bend, { out.bend(channel, value) }, \touch, { out.touch(channel, value) },
+        \allNotesOff, { out.allNotesOff(channel) });
+};
+~cwtMidiRelease = { |run, key|
+    var entry = run[\midiVoices][key];
+    if(entry.notNil) {
+        if(run[\midiOut].notNil) {
+            ~cwtMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
+            ~cwtMidiEmit.value(run[\midiOut], \touch, entry[\channel], 0, 0);
+            ~cwtMidiEmit.value(run[\midiOut], \bend, entry[\channel], 0, 8192);
+        };
+        run[\midiVoices].removeAt(key);
+    };
+};
+~cwtMidiPanicRun = { |run|
+    if(run.notNil) {
+        run[\midiVoices].keys.asArray.do { |key| ~cwtMidiRelease.value(run, key) };
+        if(run[\midiOut].notNil) {
+            (1..15).do { |channel| ~cwtMidiEmit.value(run[\midiOut], \allNotesOff, channel) };
+        };
+    };
+};
+~cwtMidiConnect = { |run|
+    var c = ~cwtConfig, error, destinations;
+    ~cwtMidiPanicRun.value(run); run[\midiOut] = nil; run[\midiConnected] = false;
+    if(c[\midiEnabled]) {
+        try { run[\midiOut] = ~cwtMidiOpen.value(c[\midiDevice], c[\midiPort]) } { |caught| error = caught };
+        if(run[\midiOut].notNil) {
+            run[\midiConnected] = true; run[\midiError] = nil;
+            "Tracked MIDI connected: % / %.".format(c[\midiDevice], c[\midiPort]).postln;
+        } {
+            try { MIDIClient.init; destinations = MIDIClient.destinations.collect { |ep| ep.device.asString ++ " / " ++ ep.name.asString } }
+                { |caught| if(error.isNil) { error = caught } };
+            run[\midiError] = if(error.notNil) { error.asString } { "destination not found" };
+            "Tracked MIDI unavailable: configured destination '% / %' could not be opened (%). Available destinations: %."
+                .format(c[\midiDevice], c[\midiPort], run[\midiError], destinations ? []).warn;
+        };
+    } { run[\midiError] = "disabled" };
+};
+~cwtMidiUpdateVoice = { |run, voice, mapped, amplitude, now|
+    var c = ~cwtConfig, entry = run[\midiVoices][voice[\key]], channel, used, note, delta, bend;
+    var dt, alpha, smoothed, expression, range = (c[\midiBendRange] ? 2).max(0.01);
+    if(c[\midiEnabled] and: { run[\midiConnected] } and: { amplitude > 0 }) {
+        if(entry.isNil) {
+            used = run[\midiVoices].values.collect { |item| item[\channel] };
+            channel = (1..15).detect { |candidate| used.includes(candidate).not };
+            if(channel.notNil) {
+                note = mapped[\continuousMidi].round.asInteger.clip(0, 127);
+                entry = (channel: channel, note: note, smoothed: amplitude, expression: -1, updated: now,
+                    frequency: voice[\frequency], continuousMidi: mapped[\continuousMidi]);
+                run[\midiVoices][voice[\key]] = entry;
+                delta = (mapped[\continuousMidi] - note).clip(range.neg, range);
+                bend = (8192 + (delta / range * 8192)).round.asInteger.clip(0, 16383);
+                entry[\bend] = bend;
+                ~cwtMidiEmit.value(run[\midiOut], \bend, channel, 0, bend);
+                ~cwtMidiEmit.value(run[\midiOut], \noteOn, channel, note, c[\midiNoteOnVelocity]);
+            };
+        };
+        if(entry.notNil) {
+            if((mapped[\continuousMidi] - entry[\note]).abs > range) {
+                ~cwtMidiEmit.value(run[\midiOut], \noteOff, entry[\channel], entry[\note], 0);
+                entry[\note] = mapped[\continuousMidi].round.asInteger.clip(0, 127);
+                delta = (mapped[\continuousMidi] - entry[\note]).clip(range.neg, range);
+                bend = (8192 + (delta / range * 8192)).round.asInteger.clip(0, 16383);
+                ~cwtMidiEmit.value(run[\midiOut], \bend, entry[\channel], 0, bend);
+                entry[\bend] = bend;
+                ~cwtMidiEmit.value(run[\midiOut], \noteOn, entry[\channel], entry[\note], c[\midiNoteOnVelocity]);
+            };
+            delta = (mapped[\continuousMidi] - entry[\note]).clip(range.neg, range);
+            bend = (8192 + (delta / range * 8192)).round.asInteger.clip(0, 16383);
+            if(bend != entry[\bend]) { ~cwtMidiEmit.value(run[\midiOut], \bend, entry[\channel], 0, bend); entry[\bend] = bend };
+            dt = (now - entry[\updated]).max(0); alpha = if(c[\midiExpressionSmoothing] <= 0) { 1 } { 1 - (dt.neg / c[\midiExpressionSmoothing]).exp };
+            smoothed = entry[\smoothed] + ((amplitude - entry[\smoothed]) * alpha);
+            expression = smoothed.linlin(c[\midiExpressionFloor], c[\midiExpressionCeiling], 1, 127).round.asInteger.clip(1, 127);
+            if((expression - entry[\expression]).abs > c[\midiExpressionDeadband]) {
+                ~cwtMidiEmit.value(run[\midiOut], \touch, entry[\channel], 0, expression); entry[\expression] = expression;
+            };
+            entry[\smoothed] = smoothed; entry[\updated] = now; entry[\frequency] = voice[\frequency]; entry[\continuousMidi] = mapped[\continuousMidi];
+        };
+    } { if(entry.notNil) { ~cwtMidiRelease.value(run, voice[\key]) } };
 };
 
 // Confidence first; incumbents win ties; full identity breaks remaining ties.
@@ -166,11 +259,46 @@ if(~weatherLeaseAcquire.isNil) {
         };
     } { "Invalid CWT output bus (use a nonnegative integer).".warn };
 };
+~cwtSetMidiEnabled = { |enabled|
+    if([true, false].includes(enabled)) {
+        ~cwtConfig[\midiEnabled] = enabled;
+        if(~cwtRun.notNil) {
+            if(enabled) { ~cwtMidiConnect.value(~cwtRun) } {
+                ~cwtMidiPanicRun.value(~cwtRun); ~cwtRun[\midiOut] = nil;
+                ~cwtRun[\midiConnected] = false; ~cwtRun[\midiError] = "disabled";
+            };
+        };
+    } { "Tracked MIDI enabled must be true or false.".warn };
+};
+~cwtSetMidiDestination = { |device, port|
+    if(device.notNil and: { port.notNil } and: { device.asString.notEmpty } and: { port.asString.notEmpty }) {
+        ~cwtConfig[\midiDevice] = device.asString; ~cwtConfig[\midiPort] = port.asString;
+        if(~cwtRun.notNil) { ~cwtMidiConnect.value(~cwtRun) };
+    } { "Tracked MIDI destination requires nonempty device and port names.".warn };
+};
+~cwtSetMidiBendRange = { |semitones|
+    if(semitones.isNumber and: { semitones.isNaN.not } and: { semitones >= 0.25 } and: { semitones <= 24 }) {
+        ~cwtMidiPanicRun.value(~cwtRun); ~cwtConfig[\midiBendRange] = semitones.asFloat;
+    } { "Invalid tracked MIDI bend range (allowed 0.25..24 semitones).".warn };
+};
+~cwtSetMidiExpression = { |floor, ceiling, smoothing=0.2, deadband=1, velocity=64|
+    if(floor.isNumber and: { ceiling.isNumber } and: { smoothing.isNumber }
+        and: { [floor, ceiling, smoothing].every { |v| v.isNaN.not } }
+        and: { floor >= 0 } and: { ceiling > floor } and: { smoothing >= 0 }
+        and: { deadband.isInteger } and: { deadband >= 0 } and: { deadband <= 127 }
+        and: { velocity.isInteger } and: { velocity >= 1 } and: { velocity <= 127 }) {
+        ~cwtConfig[\midiExpressionFloor] = floor; ~cwtConfig[\midiExpressionCeiling] = ceiling;
+        ~cwtConfig[\midiExpressionSmoothing] = smoothing; ~cwtConfig[\midiExpressionDeadband] = deadband;
+        ~cwtConfig[\midiNoteOnVelocity] = velocity;
+    } { "Invalid tracked MIDI expression settings.".warn };
+};
+~cwtMidiPanic = { ~cwtMidiPanicRun.value(~cwtRun) };
 
 ~cwtStop = {
     var run = ~cwtRun;
     if(run.notNil) {
         run[\running] = false;
+        ~cwtMidiPanicRun.value(run);
         ~weatherLeaseRelease.value(\cwt, run[\leaseKey]);
         if(run[\receiver].notNil) { thisProcess.removeOSCRecvFunc(run[\receiver]) };
         run[\tick].tryPerform(\stop);
@@ -194,8 +322,10 @@ if(~weatherLeaseAcquire.isNil) {
     stop = ~cwtStop;
     run = (running: true, router: NetAddr(config[\routerIP], config[\routerPort]),
         port: config[\localPort], voices: Dictionary.new, streams: Dictionary.new,
-        synths: Dictionary.new, lastDiagnostic: 0);
+        synths: Dictionary.new, midiVoices: Dictionary.new, midiOut: nil,
+        midiConnected: false, midiError: nil, lastDiagnostic: 0);
     ~cwtRun = run;
+    ~cwtMidiConnect.value(run);
     clearStream = { |stream|
         run[\voices].keys.asArray.do { |key|
             if(run[\voices][key][\stream] == stream) { run[\voices].removeAt(key) };
@@ -274,6 +404,9 @@ if(~weatherLeaseAcquire.isNil) {
         candidates.do { |voice| counts[voice[\device]] = (counts[voice[\device]] ? 0) + 1 };
         selected = ~cwtSelect.value(candidates, run[\synths], config[\maxPolyphony].asInteger.max(0));
         selectedKeys = selected.collect { |voice| voice[\key] };
+        run[\midiVoices].keys.asArray.do { |key|
+            if(selectedKeys.includesEqual(key).not) { ~cwtMidiRelease.value(run, key) };
+        };
         run[\synths].keys.asArray.do { |key|
             var entry = run[\synths][key];
             if(entry[\releasing]) {
@@ -311,6 +444,7 @@ if(~weatherLeaseAcquire.isNil) {
                 entry[\note] = mapped[\note]; entry[\mode] = config[\pitchMode]; entry[\hz] = mapped[\hz];
                 entry[\amp] = amp; entry[\waveform] = config[\waveform]; entry[\muted] = muted;
             };
+            ~cwtMidiUpdateVoice.value(run, voice, mapped, amp, now);
         };
         releasing = run[\synths].values.count { |entry| entry[\releasing] };
         run[\eligibleCount] = candidates.size; run[\selectedCount] = selected.size;
@@ -372,6 +506,24 @@ if(~weatherLeaseAcquire.isNil) {
             .format(run[\running], run[\eligibleCount] ? 0, run[\selectedCount] ? 0,
                 run[\releasingCount] ? 0, run[\synths].size, ~cwtConfig[\minConfidence],
                 run[\activeOutputBus], ~cwtConfig[\waveform], ~cwtConfig[\masterVolume]).postln;
+    };
+};
+~cwtMidiStatus = {
+    var run = ~cwtRun, c = ~cwtConfig;
+    if(run.isNil) {
+        "Tracked MIDI: stopped enabled=% destination='% / %' bendRange=±% semitones"
+            .format(c[\midiEnabled], c[\midiDevice], c[\midiPort], c[\midiBendRange]).postln;
+    } {
+        "Tracked MIDI: enabled=% connected=% destination='% / %' bendRange=±% active=% error=%"
+            .format(c[\midiEnabled], run[\midiConnected], c[\midiDevice], c[\midiPort],
+                c[\midiBendRange], run[\midiVoices].size, run[\midiError]).postln;
+        run[\midiVoices].keys.asArray.sort.do { |key|
+            var entry = run[\midiVoices][key], voice = run[\voices][key];
+            "  tracker=% envHz=% midi=% note=% channel=% bend=% expression=%"
+                .format(if(voice.notNil) { voice[\id] } { key }, entry[\frequency].round(0.000001),
+                    entry[\continuousMidi].round(0.0001), entry[\note], entry[\channel] + 1,
+                    entry[\bend], entry[\expression]).postln;
+        };
     };
 };
 if(~cwtAutoStart ? true) { ~cwtStart.value };

@@ -9,6 +9,8 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
 [
     \cwtSetMinConfidence, \cwtSetBaseNote, \cwtSetPitchSpan, \cwtSetWaveform,
     \cwtSetGain, \cwtMute, \cwtSetOutputBus, \cwtStatus, \cwtStop, \cwtStart,
+    \cwtSetMidiDestination, \cwtSetMidiEnabled, \cwtSetMidiBendRange,
+    \cwtSetMidiExpression, \cwtMidiStatus, \cwtMidiPanic,
     \spectrumSetMode, \spectrumSetGain, \spectrumMute, \spectrumSetBaseNote,
     \spectrumSetPitchSpan, \spectrumSetWaveform, \spectrumSetOutputBus,
     \spectrumStatus, \spectrumInspect, \spectrumStop, \spectrumStart,
@@ -27,6 +29,9 @@ check.value(calls.any { |call| call[0] == \cwtSetOutputBus }, "tracked routing c
 check.value(calls.any { |call| call[0] == \spectrumSetOutputBus }, "spectrum routing control is callable");
 check.value(calls.any { |call| call[0] == \spectrumSetMidiDestination }
     and: { calls.any { |call| call[0] == \spectrumSetMidiExpression } }, "spectrum MIDI controls are callable");
+check.value(calls.any { |call| call[0] == \cwtSetMidiDestination }
+    and: { calls.any { |call| call[0] == \cwtSetMidiBendRange }
+    and: { calls.any { |call| call[0] == \cwtSetMidiExpression } } }, "tracked MIDI controls are callable");
 check.value(calls.any { |call| call[0] == \cwtStart } and: { calls.any { |call| call[0] == \spectrumStop } },
     "lifecycle controls are callable");
 
