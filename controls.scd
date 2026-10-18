@@ -27,7 +27,7 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetMidiChannel.value(\temperature, 1);// user-facing channels 1..16
 ~spectrumSetMidiChannel.value(\humidity, 2);
 ~spectrumSetMidiChannel.value(\pressure, 3);
-~spectrumSetMidiExpression.value(0.0001, 0.02, 0.5, 2, 64);
+~spectrumSetMidiExpression.value(0.0001, 0.005, 0.5, 2, 64);
 // Arguments: amplitude floor, ceiling, smoothing seconds, MIDI deadband, note velocity
 ~spectrumMidiStatus.value;
 ~spectrumMidiPanic.value;                      // note-offs plus all-notes-off
@@ -89,11 +89,11 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtConfig[\releaseSeconds] = 2.5;            // default 2.5; new synth allocations
 
 // FULL SPECTRUM — amplitude mode and global gain
-~spectrumSetMode.value(\physical);            // default; or \significance
-~spectrumSetMode.value(\significance);
-~spectrumConfig[\physicalGain] = 1.0;         // default 0.1
-~spectrumConfig[\significanceGain] = 1.0;   // default 0.002
-~spectrumConfig[\masterGain] = 1.0;           // default 0.1
+~spectrumSetMode.value(\physical);
+~spectrumSetMode.value(\significance);        // default
+~spectrumConfig[\physicalGain] = 1.0;         // default 1.0
+~spectrumConfig[\significanceGain] = 0.001;   // default 0.001
+~spectrumConfig[\masterGain] = 1.0;           // default 1.0
 
 // FULL SPECTRUM — per-sensor gain and mute
 ~spectrumSetGain.value(\temperature, 1.0);    // default 1

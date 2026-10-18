@@ -39,18 +39,18 @@ if(~weatherLeaseAcquire.isNil) {
 };
 ~spectrumConfig = (
     routerIP: "192.168.0.41", routerPort: 5005, localPort: 9000,
-    mode: \physical, referenceTempC: 20, referenceRH: 50, referencePressureHpa: 1013.25,
+    mode: \significance, referenceTempC: 20, referenceRH: 50, referencePressureHpa: 1013.25,
     baseNote: 48.0, pitchSpan: 48.0,
     baseNoteOverrides: Dictionary.new, pitchSpanOverrides: Dictionary.new,
     temperatureWaveform: \sine, humidityWaveform: \sine, pressureWaveform: \sine,
     temperatureGain: 1.0, humidityGain: 1.0, pressureGain: 1.0,
-    physicalGain: 1.0, significanceGain: 1.0, masterGain: 1.0,
+    physicalGain: 1.0, significanceGain: 0.001, masterGain: 1.0,
     amplitudeCeiling: 0.02, smoothingSeconds: 2.0, staleTimeoutSeconds: 15.0,
     pendingTimeoutSeconds: 3.0, maxPendingFrames: 4, maxScales: 256,
     outputBus: 2, fallbackOutputBus: 0,
     midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
     temperatureMidiChannel: 1, humidityMidiChannel: 2, pressureMidiChannel: 3,
-    midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.02,
+    midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.005,
     midiExpressionSmoothing: 0.5, midiExpressionDeadband: 2, midiNoteOnVelocity: 64,
     diagnosticsSeconds: 10.0, rejectDiagnostics: true, rejectDiagnosticSeconds: 5.0,
     shutdownSeconds: 2.0

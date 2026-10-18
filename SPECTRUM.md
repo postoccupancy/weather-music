@@ -12,7 +12,7 @@ controls are:
 ~spectrumStart.value;
 ~spectrumStop.value;                 // fades, unsubscribes, then frees resources
 ~spectrumSetMode.value(\physical);
-~spectrumSetMode.value(\significance);
+~spectrumSetMode.value(\significance); // default
 ~spectrumSetBaseNote.value(48);      // MIDI-note coordinate, continuous playback
 ~spectrumSetPitchSpan.value(48);     // default; semitones across 0.05..1 environmental Hz
 ~spectrumSetBaseNote.value(60, \temperature); // optional sensor override
@@ -125,6 +125,11 @@ conversion factors are not applied in significance mode. Adjust `physicalGain`,
 Targets are bounded by `amplitudeCeiling`; rate-limited warnings report clamping,
 and a final limiter catches exceptional summed peaks.
 
+Significance mode is the default with `significanceGain` 0.001. Physical mode remains
+available with `physicalGain` 1.0. These conservative significance defaults keep the
+typical target range below the per-oscillator ceiling while preserving differences
+relative to each scale's measured background power.
+
 ## Sustained spectrum MIDI
 
 Spectrum MIDI is enabled by default and startup attempts to open `IAC Driver` /
@@ -147,7 +152,7 @@ destination is selected. MIDI uses the effective per-scale targets before audio
 ~spectrumSetMidiChannel.value(\temperature, 1);  // user-facing channels 1..16
 ~spectrumSetMidiChannel.value(\humidity, 2);
 ~spectrumSetMidiChannel.value(\pressure, 3);
-~spectrumSetMidiExpression.value(0.0001, 0.02, 0.5, 2, 64);
+~spectrumSetMidiExpression.value(0.0001, 0.005, 0.5, 2, 64);
 ~spectrumMidiStatus.value;
 ~spectrumMidiPanic.value;
 ```

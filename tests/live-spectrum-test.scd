@@ -13,6 +13,9 @@ check.value(~spectrumSignificance.value([1, 0, 0, 0, 0, 0]).isNil, "missing back
 check.value((~spectrumPitch.value(0.05) - 48.midicps).abs < 1e-8, "pitch low");
 check.value((~spectrumPitch.value(1) - 96.midicps).abs < 1e-8, "pitch high at default 48-semitone span");
 check.value(~spectrumConfig[\midiEnabled], "MIDI enabled by default");
+check.value(~spectrumConfig[\mode] == \significance and: { ~spectrumConfig[\significanceGain] == 0.001 },
+    "significance mode and conservative gain are defaults");
+check.value(~spectrumConfig[\midiExpressionCeiling] == 0.005, "default MIDI expression range matches significance targets");
 check.value(~spectrumFinite.value(1.0), "frame finite");
 check.value((1.0 > 9.007199254740991e15).not, "frame below safe integer maximum");
 check.value(((1.0 - 1.0.floor).abs > 0).not, "frame integral");
@@ -51,11 +54,11 @@ Routine({
     dest.sendMsg(*packet.value(1, 35, 13)); 0.1.wait; check.value(st[\ready].not, "incomplete silent");
     dest.sendMsg(*packet.value(1)); 0.4.wait;
     check.value(st[\ready] and: { st[\rows].size == 48 }, "reverse chunk reassembly");
-    check.value((st[\targets][0] - 0.01).abs < 1e-7, "physical without normalization");
+    check.value((st[\targets][0] - 0.002).abs < 1e-7, "default significance target uses magnitude and background power");
     check.value(run[\midiActive].size == 48 and: { midiCount.value(\noteOn) == 48 }
         and: { midiCount.value(\polyTouch) == 48 }, "48-semitone mapping starts 48 held notes with aftertouch");
     midi.clear; ~spectrumSetPitchSpan.value(36); 0.4.wait;
-    check.value(run[\midiActive].size == 37 and: { run[\midiActive].values.collect { |entry| entry[\smoothed] }.maxItem > 0.015 },
+    check.value(run[\midiActive].size == 37 and: { run[\midiActive].values.collect { |entry| entry[\smoothed] }.maxItem > 0.003 },
         "36-semitone mapping aggregates scale collisions");
     check.value(midiCount.value(\noteOff) > 0, "pitch remap releases old assignments");
     midi.clear; ~spectrumSetPitchSpan.value(48); 0.4.wait;
@@ -133,8 +136,10 @@ Routine({
     dest.sendMsg(*packet.value(1, 0, 35, "epoch-b")); dest.sendMsg(*packet.value(1, 35, 13, "epoch-b")); 0.3.wait;
     check.value(st[\epoch].asString == "epoch-b" and: { st[\frame] == 1 }, "epoch ordering reset");
     dest.sendMsg(*packet.value(99)); 0.1.wait; check.value(st[\epoch].asString == "epoch-b", "retired epoch rejected");
-    midi.clear; ~spectrumConfig[\significanceGain] = 0.002; ~spectrumSetMode.value(\significance); 0.4.wait;
-    check.value((st[\targets][0] - 0.004).abs < 1e-7, "mode switch");
+    midi.clear; ~spectrumSetMode.value(\physical); 0.4.wait;
+    check.value((st[\targets][0] - 0.01).abs < 1e-7, "physical mode remains available without normalization");
+    ~spectrumConfig[\significanceGain] = 0.002; ~spectrumSetMode.value(\significance); 0.4.wait;
+    check.value((st[\targets][0] - 0.004).abs < 1e-7, "switch back to significance mode");
     check.value(midiCount.value(\polyTouch) > 0, "mode change updates MIDI expression without retriggering notes");
     ~spectrumSetGain.value(\temperature, 2); 0.4.wait;
     check.value((st[\targets][0] - 0.008).abs < 1e-7, "live gain");
