@@ -61,7 +61,7 @@ if(~weatherLeaseAcquire.isNil) {
     toneEnabled: true, midiEnabled: true, midiDevice: "IAC Driver", midiPort: "Bus 3 - Ableton Live",
     midiBendRange: 2.0, midiExpressionFloor: 0.005, midiExpressionCeiling: 0.18,
     midiExpressionSmoothing: 0.2, midiExpressionDeadband: 1, midiNoteOnVelocity: 64,
-    rhythmEnabled: false, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
+    rhythmEnabled: true, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
     rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
     rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 1.0,
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,

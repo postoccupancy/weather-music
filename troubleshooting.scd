@@ -123,3 +123,84 @@ s.queryAllNodes;  // Running synths and groups
 
 // For SuperCollider → MacBook speakers directly
 ~configureAudio.value("MacBook Pro Speakers", 2, 0);
+
+
+~spectrumSetMidiExpression.value(
+    0.0001,  // floor
+    0.1,     // ceiling (raised from 0.02)
+    0.1,     // smoothing
+    0,       // deadband
+    64       // note-on velocity
+);
+
+~spectrumMidiStatus.value;
+~spectrumInspect.value(\temperature, 0);
+
+~spectrumRun[\streams].values.do { |stream|
+    var targets = stream[\targets] ? [];
+    [
+        stream[\signal],
+        \minimum, targets.minItem,
+        \maximum, targets.maxItem,
+        \average, targets.sum / targets.size.max(1)
+    ].postln;
+};
+
+~spectrumSetMidiExpression.value(
+    0.00001, // floor
+    0.003,   // ceiling
+    0.1,     // smoothing
+    0,       // no deadband while diagnosing
+    64
+);
+
+~spectrumSetMidiExpression.value(0.00001, 0.005, 0.25, 1, 64);
+
+[
+    \mode, ~spectrumConfig[\mode],
+    \physicalGain, ~spectrumConfig[\physicalGain],
+    \significanceGain, ~spectrumConfig[\significanceGain],
+    \amplitudeCeiling, ~spectrumConfig[\amplitudeCeiling]
+].postln;
+
+~spectrumConfig[\physicalGain] = 0.5;
+// or:
+~spectrumConfig[\significanceGain] = 0.001;
+
+~spectrumRun[\streams].values.do { |stream|
+    var targets = stream[\targets] ? [];
+    if(targets.notEmpty) {
+        [
+            stream[\signal],
+            \min, targets.minItem,
+            \max, targets.maxItem,
+            \mean, targets.sum / targets.size,
+            \median, targets.sort[targets.size div: 2],
+            \clipped, targets.count { |a| a >= ~spectrumConfig[\amplitudeCeiling] }
+        ].postln;
+    };
+};
+
+~spectrumMidiStatus.value;
+
+~spectrumSetMidiExpression.value(
+    0.00001,  // floor
+    0.02,    // ceiling
+    0,        // no smoothing
+    0,        // no deadband
+    64
+);
+
+[
+    \mode, ~spectrumConfig[\mode],
+    \physicalGain, ~spectrumConfig[\physicalGain],
+    \significanceGain, ~spectrumConfig[\significanceGain],
+    \amplitudeCeiling, ~spectrumConfig[\amplitudeCeiling]
+].postln;
+
+~spectrumRun[\streams].values.do { |st|
+    var t = st[\targets] ? [];
+    if(t.notEmpty) {
+        [st[\signal], \min, t.minItem, \max, t.maxItem, \mean, t.sum / t.size].postln;
+    };
+};

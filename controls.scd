@@ -62,6 +62,7 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmNoteMapping.value(\perBand);  // or \perSensor
 ~spectrumSetRhythmBands.value([[0.05, 0.12], [0.12, 0.35], [0.35, 1.000001]]);
 ~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42); // band notes, then sensor notes
+// 36 = kick drum, 38 = snare, 42 = hihat (808 core kit)
 ~spectrumRhythmStatus.value;
 ~spectrumRhythmResync.value;
 ~spectrumRhythmPanic.value;

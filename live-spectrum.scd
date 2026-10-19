@@ -53,7 +53,7 @@ if(~weatherLeaseAcquire.isNil) {
     temperatureMidiChannel: 1, humidityMidiChannel: 2, pressureMidiChannel: 3,
     midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.005,
     midiExpressionSmoothing: 0.5, midiExpressionDeadband: 2, midiNoteOnVelocity: 64,
-    rhythmEnabled: false, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
+    rhythmEnabled: true, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
     rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
     rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 4.0,
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
