@@ -30,6 +30,27 @@ default (30–240 pulses per minute). These bounds are explicit time compression
 ~spectrumSetRhythmRate.value(0.5, 4.0);
 ```
 
+Spectrum rhythm timing defaults to `continuous`, which uses those mapped rates
+directly and has no shared clock. `quantized` snaps each mapped rate to an allowed
+ratio of a reference pulse. The default 2 Hz reference and `[0.5, 1, 2]` ratios yield
+1, 2, or 4 Hz. Rate hysteresis prevents small mapped-rate changes near a boundary
+from repeatedly changing ratios.
+
+```supercollider
+~spectrumSetRhythmTiming.value(\continuous);
+~spectrumSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true);
+~spectrumSetRhythmTiming.value(\quantized);
+```
+
+When alignment is enabled, quantized sources created while the quantized mode is
+already active derive their cycle position from one monotonic anchor. Sources added
+later join that same grid; removing a source does not affect the others. Switching a
+running source between timing modes, or changing its quantized ratio, preserves its
+current oscillator phase to avoid abrupt retriggers. Therefore switching an already
+running collection into quantized mode does not forcibly realign those existing
+sources; start in quantized mode when a shared initial downbeat is required. Rhythm
+expression, including phase displacement, is applied after timing quantization.
+
 Pulses default to 80 ms and MIDI velocities 35–110. Duration is controlled separately
 from velocity. Tracked velocity follows the
 existing effective amplitude after confidence, normalization, sensor gain, and mute.

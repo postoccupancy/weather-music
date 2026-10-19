@@ -156,6 +156,7 @@ destination is selected. MIDI uses the effective per-scale targets before audio
 ~spectrumSetMidiChannel.value(\humidity, 2);
 ~spectrumSetMidiChannel.value(\pressure, 3);
 ~spectrumSetMidiExpression.value(0.0001, 0.005, 0.5, 2, 64);
+~spectrumSetToneExpression.value(\aftertouch); // default
 ~spectrumMidiStatus.value;
 ~spectrumMidiPanic.value;
 ```
@@ -179,7 +180,7 @@ aggregation, so scales that map to the same MIDI note still share the existing s
 amplitude and note ownership.
 
 ```supercollider
-~spectrumSetToneSelection.value(\all, 48);
+~spectrumSetToneSelection.value(\all);
 ~spectrumSetToneSelection.value(\perBand, 3);
 ~spectrumSetToneSelection.value(\fixedBand, 3);
 ~spectrumSetToneSelection.value(\topN, 6);
@@ -190,6 +191,37 @@ Tone hysteresis applies only to `perBand` and `topN`. The relative margin and mi
 residence use monotonic time; invalid and stale incumbents release immediately. Native
 SuperCollider spectrum audio remains a 48-oscillator bank and is unaffected by this
 MIDI-only selection.
+
+### Tone expression modes
+
+Spectrum tone expression is independent of tone selection and Bus 4 rhythm output:
+
+- `off` uses the configured fixed note-on velocity and sends no ongoing expression.
+- `aftertouch` preserves the default per-note polyphonic-aftertouch behavior.
+- `filter` sends MIDI CC74 once per active sensor channel.
+- `pitchBend` sends one conventional channel-wide pitch bend per sensor channel.
+
+For CC74 and pitch bend, all selected notes on a channel contribute by summing their
+existing processed amplitudes. The sum is bounded and normalized by the existing
+`midiExpressionFloor` and `midiExpressionCeiling`, then smoothed as one channel value.
+This prevents individual scales on the same MIDI channel from sending conflicting
+controls. A channel with no active tones immediately returns CC74 to zero and pitch
+bend to neutral 8192.
+
+```supercollider
+~spectrumSetToneExpression.value(\off);
+~spectrumSetToneExpression.value(\aftertouch);
+~spectrumSetToneExpression.value(\filter);
+~spectrumSetToneFilter.value(0, 127, 0.5, 2);
+~spectrumSetToneExpression.value(\pitchBend);
+~spectrumSetTonePitchBend.value(2.0, 0.5, 64);
+```
+
+CC74 has an effect only when the Ableton instrument or an explicit MIDI mapping
+responds to it. Conventional MIDI pitch bend affects every note on its channel; set
+the receiving instrument's bend range to match `tonePitchBendRange` (±2 semitones by
+default). Mode changes, mute, disable, disconnect, panic, and stop restore neutral
+bend without retriggering held notes.
 
 No pitch bend is sent, so unrelated notes cannot be bent. Spectrum rhythm remains a
 separate Bus 4 output with its own selection, expression, timing, and cleanup state.

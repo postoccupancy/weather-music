@@ -170,6 +170,8 @@ With SuperCollider installed, run the native local fixture test:
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/selection-hysteresis-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-rhythm-selection-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-tone-selection-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-rhythm-timing-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-tone-expression-test.scd
 ```
 
 It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi

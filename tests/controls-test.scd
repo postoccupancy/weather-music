@@ -25,7 +25,9 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
     \spectrumSetRhythmActivityThreshold, \spectrumSetRhythmNotes, \spectrumSetRhythmNoteMapping,
     \spectrumSetRhythmExpression, \spectrumSetRhythmConstantVelocity, \spectrumSetRhythmPhase,
     \spectrumSetRhythmEuclidean, \spectrumSetRhythmSelectionHysteresis,
+    \spectrumSetRhythmTiming, \spectrumSetRhythmQuantization,
     \spectrumSetToneSelection, \spectrumSetToneSelectionHysteresis,
+    \spectrumSetToneExpression, \spectrumSetToneFilter, \spectrumSetTonePitchBend,
     \spectrumRhythmStatus, \spectrumRhythmResync, \spectrumRhythmPanic
 ].do { |name| currentEnvironment.put(name, { |...args| calls.add([name] ++ args) }) };
 

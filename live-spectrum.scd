@@ -53,6 +53,9 @@ if(~weatherLeaseAcquire.isNil) {
     temperatureMidiChannel: 1, humidityMidiChannel: 2, pressureMidiChannel: 3,
     midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.005,
     midiExpressionSmoothing: 0.5, midiExpressionDeadband: 2, midiNoteOnVelocity: 64,
+    toneExpression: \aftertouch, toneFilterMin: 0, toneFilterMax: 127,
+    toneFilterSmoothing: 0.5, toneFilterDeadband: 2,
+    tonePitchBendRange: 2.0, tonePitchBendSmoothing: 0.5, tonePitchBendDeadband: 64,
     toneSelection: \all, toneSelectionCount: 48,
     toneSelectionMargin: 0.0, toneSelectionResidence: 0.0,
     rhythmEnabled: true, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
@@ -61,6 +64,8 @@ if(~weatherLeaseAcquire.isNil) {
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
     rhythmSelection: \perBand, rhythmSelectionCount: 3, rhythmActivityThreshold: 0.0,
     rhythmSelectionMargin: 0.0, rhythmSelectionResidence: 0.0,
+    rhythmTiming: \continuous, rhythmQuantizeReferenceHz: 2.0,
+    rhythmQuantizeRatios: [0.5, 1.0, 2.0], rhythmQuantizeHysteresis: 0.10, rhythmQuantizeAlign: true,
     rhythmExpression: \velocity, rhythmConstantVelocity: 80,
     rhythmPhaseMaxCycles: 0.25, rhythmPhaseSmoothing: 2.0,
     rhythmEuclideanSteps: 8, rhythmEuclideanMinHits: 1, rhythmEuclideanMaxHits: 8,
@@ -172,11 +177,29 @@ if(~weatherLeaseAcquire.isNil) {
         \noteOn, { out.noteOn(channel, note, value) },
         \noteOff, { out.noteOff(channel, note, value) },
         \polyTouch, { out.polyTouch(channel, note, value) },
+        \control, { out.control(channel, note, value) },
+        \bend, { out.bend(channel, value) },
         \allNotesOff, { out.allNotesOff(channel) }
     );
 };
+~spectrumToneResetExpression = { |run|
+    if(run.notNil) {
+        if(run[\midiOut].notNil) {
+            run[\midiActive].values.do { |entry|
+                ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, entry[\channel], entry[\note], 0);
+                entry[\expression] = -1;
+            };
+            (0..2).do { |channel|
+                ~spectrumMidiEmit.value(run[\midiOut], \control, channel, 74, 0);
+                ~spectrumMidiEmit.value(run[\midiOut], \bend, channel, 0, 8192);
+            };
+        };
+        (run[\toneChannelExpression] ? Dictionary.new).clear;
+    };
+};
 ~spectrumMidiPanicRun = { |run|
     if(run.notNil) {
+        ~spectrumToneResetExpression.value(run);
         if(run[\midiOut].notNil) {
             run[\midiActive].values.do { |entry|
                 if((entry[\channel] >= 0) and: { entry[\channel] <= 2 }) {
@@ -308,6 +331,8 @@ if(~weatherLeaseAcquire.isNil) {
 };
 ~spectrumMidiUpdate = { |run|
     var c = ~spectrumConfig, desired, now = Main.elapsedTime, dt, alpha, floor, ceiling, deadband, velocity;
+    var mode = c[\toneExpression] ? \aftertouch, channelTotals = Dictionary.new;
+    run[\toneChannelExpression] = run[\toneChannelExpression] ? Dictionary.new;
     if(c[\toneEnabled].not or: { c[\midiEnabled].not } or: { run[\midiConnected].not }) { ~spectrumMidiPanicRun.value(run) } {
         desired = ~spectrumMidiDesired.value(run, now);
         floor = c[\midiExpressionFloor]; ceiling = c[\midiExpressionCeiling];
@@ -323,7 +348,8 @@ if(~weatherLeaseAcquire.isNil) {
         desired.keysValuesDo { |key, wanted|
             var active = run[\midiActive][key], smooth, expression;
             if(wanted[\amplitude] >= floor) {
-                smooth = if(active.isNil) { wanted[\amplitude] } {
+                channelTotals[wanted[\channel]] = (channelTotals[wanted[\channel]] ? 0) + wanted[\amplitude];
+                smooth = if(active.isNil or: { mode != \aftertouch }) { wanted[\amplitude] } {
                     active[\smoothed] + ((wanted[\amplitude] - active[\smoothed]) * alpha)
                 };
                 expression = (((smooth.clip(floor, ceiling) - floor) / (ceiling - floor)) * 126 + 1)
@@ -333,13 +359,44 @@ if(~weatherLeaseAcquire.isNil) {
                         signals: wanted[\signals]);
                     run[\midiActive][key] = active; run[\midiChannelsUsed].add(wanted[\channel]);
                     ~spectrumMidiEmit.value(run[\midiOut], \noteOn, wanted[\channel], wanted[\note], velocity);
-                    ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, wanted[\channel], wanted[\note], expression);
+                    if(mode == \aftertouch) {
+                        ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, wanted[\channel], wanted[\note], expression)
+                    };
                 } {
                     active[\smoothed] = smooth; active[\signals] = wanted[\signals];
-                    if((expression - active[\expression]).abs >= deadband) {
+                    if(mode == \aftertouch and: { (expression - active[\expression]).abs >= deadband }) {
                         active[\expression] = expression;
                         ~spectrumMidiEmit.value(run[\midiOut], \polyTouch, active[\channel], active[\note], expression);
                     };
+                };
+            };
+        };
+        if([\filter, \pitchBend].includes(mode)) {
+            (0..2).do { |channel|
+                var total = channelTotals[channel], state = run[\toneChannelExpression][channel];
+                var normalized, smoothing, channelAlpha, smooth, value, previous;
+                if(total.isNil) {
+                    if(state.notNil) {
+                        if(mode == \filter) { ~spectrumMidiEmit.value(run[\midiOut], \control, channel, 74, 0) } {
+                            ~spectrumMidiEmit.value(run[\midiOut], \bend, channel, 0, 8192)
+                        };
+                        run[\toneChannelExpression].removeAt(channel);
+                    };
+                } {
+                    normalized = total.clip(floor, ceiling).linlin(floor, ceiling, 0, 1);
+                    smoothing = c[if(mode == \filter) { \toneFilterSmoothing } { \tonePitchBendSmoothing }];
+                    channelAlpha = if(smoothing <= 0) { 1 } { 1 - (dt.neg / smoothing).exp };
+                    smooth = if(state.isNil) { normalized } { state[\smoothed] + ((normalized-state[\smoothed])*channelAlpha) };
+                    value = if(mode == \filter) {
+                        smooth.linlin(0, 1, c[\toneFilterMin], c[\toneFilterMax]).round.asInteger.clip(0,127)
+                    } { smooth.linlin(0, 1, 0, 16383).round.asInteger.clip(0,16383) };
+                    previous = if(state.isNil) { nil } { state[\value] };
+                    if(previous.isNil or: { (value-previous).abs >= c[if(mode == \filter) { \toneFilterDeadband } { \tonePitchBendDeadband }] }) {
+                        if(mode == \filter) { ~spectrumMidiEmit.value(run[\midiOut], \control, channel, 74, value) } {
+                            ~spectrumMidiEmit.value(run[\midiOut], \bend, channel, 0, value)
+                        };
+                    };
+                    run[\toneChannelExpression][channel] = (smoothed:smooth, value:value);
                 };
             };
         };
@@ -583,9 +640,9 @@ if(~weatherLeaseAcquire.isNil) {
             .format(c[\midiEnabled], c[\midiDevice], c[\midiPort], c[\temperatureMidiChannel],
                 c[\humidityMidiChannel], c[\pressureMidiChannel]).postln;
     } {
-        "Spectrum MIDI: enabled=% connected=% destination='% / %' channels=[temperature:% humidity:% pressure:%] activeNotes=% error=%"
+        "Spectrum MIDI: enabled=% connected=% destination='% / %' toneSelection=% expression=% channels=[temperature:% humidity:% pressure:%] activeNotes=% error=%"
             .format(c[\midiEnabled], run[\midiConnected], c[\midiDevice], c[\midiPort],
-                c[\temperatureMidiChannel], c[\humidityMidiChannel], c[\pressureMidiChannel],
+                c[\toneSelection], c[\toneExpression], c[\temperatureMidiChannel], c[\humidityMidiChannel], c[\pressureMidiChannel],
                 run[\midiActive].size, run[\midiError]).postln;
         run[\midiActive].values.asArray.sort { |a, b|
             (a[\channel] < b[\channel]) or: { (a[\channel] == b[\channel]) and: { a[\note] < b[\note] } }
@@ -599,14 +656,15 @@ if(~weatherLeaseAcquire.isNil) {
     var run = ~spectrumRun, c = ~spectrumConfig;
     if(run.isNil) { "Spectrum rhythm: stopped enabled=% destination='% / %'".format(
         c[\rhythmEnabled], c[\rhythmMidiDevice], c[\rhythmMidiPort]).postln } {
-        "Spectrum rhythm: enabled=% connected=% selection=% bands=% expression=% noteMapping=% sources=% active=% gates=% error=%".format(
+        "Spectrum rhythm: enabled=% connected=% selection=% bands=% timing=% expression=% noteMapping=% sources=% active=% gates=% error=%".format(
             c[\rhythmEnabled], run[\rhythmConnected], c[\rhythmSelection], c[\rhythmSelectionCount],
-            c[\rhythmExpression], c[\rhythmNoteMapping], run[\rhythmSources].size,
+            c[\rhythmTiming], c[\rhythmExpression], c[\rhythmNoteMapping], run[\rhythmSources].size,
             run[\rhythmSources].values.count { |source| source[\active] ? true },
             run[\rhythmGates].size, run[\rhythmError]).postln;
         run[\rhythmSources].keys.asArray.sort.do { |key| var source = run[\rhythmSources][key];
-            "  source=% active=% representativeHz=% cycleHz=% stepHz=% steps=% hits=% significance=% velocity=% channel=% note=% phase=% offset=%".format(
-                key, source[\active] ? true, source[\sourceHz].round(0.000001), source[\rateHz].round(0.001),
+            "  source=% active=% representativeHz=% rawCycleHz=% cycleHz=% ratio=% stepHz=% steps=% hits=% significance=% velocity=% channel=% note=% phase=% offset=%".format(
+                key, source[\active] ? true, source[\sourceHz].round(0.000001), source[\rawRateHz].round(0.001),
+                source[\rateHz].round(0.001), source[\quantizedRatio],
                 (source[\rateHz] * (c[\rhythmEuclideanSteps] ? 8)).round(0.001), c[\rhythmEuclideanSteps],
                 source[\euclideanHits], source[\significance].round(0.001), source[\velocity],
                 source[\channel] + 1, source[\note], source[\phase].round(0.001), source[\phaseOffset].round(0.001)).postln;
@@ -666,6 +724,29 @@ if(~weatherLeaseAcquire.isNil) {
         ~spectrumConfig[\rhythmPulseMinHz] = minimum; ~spectrumConfig[\rhythmPulseMaxHz] = maximum;
     } { "Spectrum rhythm rates require 0 < minimum <= maximum.".warn };
 };
+~spectrumSetRhythmTiming = { |mode=\continuous|
+    if([\continuous, \quantized].includes(mode)) {
+        ~spectrumConfig[\rhythmTiming] = mode;
+        if(mode == \quantized and: { ~spectrumRun.notNil }) {
+            ~spectrumRun[\rhythmAlignmentAnchor] = Main.elapsedTime;
+        };
+    } { "Spectrum rhythm timing must be continuous or quantized.".warn };
+};
+~spectrumSetRhythmQuantization = { |reference=2.0, ratios=#[0.5, 1, 2], hysteresis=0.10, align=true|
+    if(~spectrumFinite.value(reference) and: { reference > 0 }
+        and: { ratios.isArray } and: { ratios.notEmpty }
+        and: { ratios.every { |ratio| ~spectrumFinite.value(ratio) and: { ratio > 0 } } }
+        and: { ~spectrumFinite.value(hysteresis) } and: { hysteresis >= 0 }
+        and: { [true,false].includes(align) }) {
+        ~spectrumConfig[\rhythmQuantizeReferenceHz] = reference;
+        ~spectrumConfig[\rhythmQuantizeRatios] = ratios.asArray.sort;
+        ~spectrumConfig[\rhythmQuantizeHysteresis] = hysteresis;
+        ~spectrumConfig[\rhythmQuantizeAlign] = align;
+        if(~spectrumRun.notNil and: { align } and: { ~spectrumRun[\rhythmSources].isEmpty }) {
+            ~spectrumRun[\rhythmAlignmentAnchor] = Main.elapsedTime
+        };
+    } { "Spectrum rhythm quantization requires reference > 0, positive ratios, nonnegative hysteresis, and boolean alignment.".warn };
+};
 ~spectrumSetRhythmPulseDuration = { |duration=0.08|
     if(~spectrumFinite.value(duration) and: { duration > 0 } and: { duration <= 2 }) {
         ~spectrumConfig[\rhythmPulseDuration] = duration;
@@ -719,11 +800,13 @@ if(~weatherLeaseAcquire.isNil) {
         ~spectrumConfig[\rhythmEuclideanMaxHits] = maximum; ~spectrumConfig[\rhythmEuclideanDensityHysteresis] = hysteresis;
     } { "Spectrum Euclidean settings require 1..64 steps and 0 <= minimum <= maximum <= steps.".warn };
 };
-~spectrumSetToneSelection = { |mode=\all, count=48|
-    if([\all, \perBand, \fixedBand, \topN].includes(mode) and: { count.isInteger } and: { count >= 1 } and: { count <= 48 }) {
-        ~spectrumConfig[\toneSelection] = mode; ~spectrumConfig[\toneSelectionCount] = count;
+~spectrumSetToneSelection = { |mode=\all, count|
+    var validCount = count.isInteger and: { count >= 1 } and: { count <= 48 };
+    if([\all, \perBand, \fixedBand, \topN].includes(mode) and: { (mode == \all) or: { validCount } }) {
+        ~spectrumConfig[\toneSelection] = mode;
+        if(mode == \all) { ~spectrumConfig[\toneSelectionCount] = 48 } { ~spectrumConfig[\toneSelectionCount] = count };
         if(~spectrumRun.notNil) { ~spectrumRun[\toneSelectionState].clear };
-    } { "Spectrum tone selection requires all/perBand/fixedBand/topN and a count from 1 to 48.".warn };
+    } { "Spectrum tone selection requires all, or perBand/fixedBand/topN with a count from 1 to 48.".warn };
 };
 ~spectrumSetToneSelectionHysteresis = { |margin=0.10, residence=5.0|
     if(~spectrumFinite.value(margin) and: { margin >= 0 } and: { ~spectrumFinite.value(residence) } and: { residence >= 0 }) {
@@ -764,6 +847,30 @@ if(~weatherLeaseAcquire.isNil) {
         ~spectrumConfig[\midiExpressionSmoothing] = smoothing; ~spectrumConfig[\midiExpressionDeadband] = deadband;
         ~spectrumConfig[\midiNoteOnVelocity] = velocity;
     } { "Invalid MIDI expression settings: require 0 <= floor < ceiling, smoothing >= 0, deadband 0..127, velocity 1..127.".warn };
+};
+~spectrumSetToneExpression = { |mode=\aftertouch|
+    if([\off, \aftertouch, \filter, \pitchBend].includes(mode)) {
+        if(~spectrumConfig[\toneExpression] != mode and: { ~spectrumRun.notNil }) {
+            ~spectrumToneResetExpression.value(~spectrumRun)
+        };
+        ~spectrumConfig[\toneExpression] = mode;
+    } { "Spectrum tone expression must be off, aftertouch, filter, or pitchBend.".warn };
+};
+~spectrumSetToneFilter = { |minimum=0, maximum=127, smoothing=0.5, deadband=2|
+    if(minimum.isInteger and: { maximum.isInteger } and: { minimum >= 0 } and: { maximum <= 127 }
+        and: { maximum >= minimum } and: { ~spectrumFinite.value(smoothing) } and: { smoothing >= 0 }
+        and: { deadband.isInteger } and: { deadband >= 0 } and: { deadband <= 127 }) {
+        ~spectrumConfig[\toneFilterMin] = minimum; ~spectrumConfig[\toneFilterMax] = maximum;
+        ~spectrumConfig[\toneFilterSmoothing] = smoothing; ~spectrumConfig[\toneFilterDeadband] = deadband;
+    } { "Spectrum filter expression requires CC bounds 0..127, nonnegative smoothing, and deadband 0..127.".warn };
+};
+~spectrumSetTonePitchBend = { |range=2.0, smoothing=0.5, deadband=64|
+    if(~spectrumFinite.value(range) and: { range > 0 } and: { range <= 24 }
+        and: { ~spectrumFinite.value(smoothing) } and: { smoothing >= 0 }
+        and: { deadband.isInteger } and: { deadband >= 0 } and: { deadband <= 8192 }) {
+        ~spectrumConfig[\tonePitchBendRange] = range; ~spectrumConfig[\tonePitchBendSmoothing] = smoothing;
+        ~spectrumConfig[\tonePitchBendDeadband] = deadband;
+    } { "Spectrum pitch-bend expression requires range 0..24 semitones, nonnegative smoothing, and deadband 0..8192.".warn };
 };
 ~spectrumMidiPanic = { ~spectrumMidiPanicRun.value(~spectrumRun) };
 ~spectrumRhythmPanic = { ~weatherRhythmPanic.value(~spectrumRun, (0..2), ~spectrumRhythmEmit, false) };
@@ -858,9 +965,10 @@ if(~weatherLeaseAcquire.isNil) {
             lastRejectDiagnostic: -100, lastClamp: -100, lastDiagnostic: Main.elapsedTime,
             routingState: \initializing, activeOutputBus: nil, outputPeak: 0.0, outputSeen: nil,
             midiOut: nil, midiConnected: false, midiError: nil, midiActive: Dictionary.new,
-            midiChannelsUsed: Set.new, midiLastUpdate: Main.elapsedTime,
+            midiChannelsUsed: Set.new, midiLastUpdate: Main.elapsedTime, toneChannelExpression: Dictionary.new,
             rhythmOut: nil, rhythmConnected: false, rhythmError: nil,
             rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, rhythmCursor: 0,
+            rhythmAlignmentAnchor: Main.elapsedTime,
             rhythmSelectionState: Dictionary.new, toneSelectionState: Dictionary.new);
         ~spectrumRun = run;
         [\temperature, \humidity, \pressure].do { |signal|

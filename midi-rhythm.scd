@@ -8,6 +8,19 @@
     var position = (sourceHz.clip(low, high) / low).log / (high / low).log;
     outLow * ((outHigh / outLow) ** position)
 };
+~weatherRhythmQuantizedRate = { |rawRate, previousRatio, config|
+    var reference = (config[\rhythmQuantizeReferenceHz] ? 2.0).max(0.01);
+    var ratios = (config[\rhythmQuantizeRatios] ? [0.5, 1, 2]).select { |ratio| ratio.isNumber and: { ratio > 0 } }.sort;
+    var candidate, previousRate, hysteresis = (config[\rhythmQuantizeHysteresis] ? 0.10).max(0);
+    if(ratios.isEmpty) { ratios = [1.0] };
+    candidate = ratios.sort { |a,b| (rawRate / (reference*a)).log.abs < (rawRate / (reference*b)).log.abs }.first;
+    if(previousRatio.notNil and: { ratios.includes(previousRatio) } and: { candidate != previousRatio }) {
+        previousRate = reference * previousRatio;
+        if(((rawRate / (reference*candidate)).log.abs + (1+hysteresis).log) >=
+            (rawRate / previousRate).log.abs) { candidate = previousRatio };
+    };
+    (rate:reference*candidate, ratio:candidate)
+};
 ~weatherRhythmNormalized = { |level, config|
     var low = config[\rhythmVelocityInputFloor] ? 0;
     var high = (config[\rhythmVelocityInputCeiling] ? 1).max(low + 0.000001);
@@ -80,8 +93,9 @@
         };
     };
     desired.keysValuesDo { |key, wanted|
-        var source = run[\rhythmSources][key], previousMode;
+        var source = run[\rhythmSources][key], previousMode, isNew = false, rawRate, rateInfo, total;
         if(source.isNil) {
+            isNew = true;
             source = wanted.copy.putAll((phase:0.0, cycles:0, lastTime:now, phaseOffset:0.0,
                 emittedCycle:0, euclideanStep:0, euclideanHits:nil));
             run[\rhythmSources][key] = source;
@@ -95,7 +109,20 @@
             wanted.keysValuesDo { |field, value| source[field] = value };
         };
         previousMode = source[\expressionMode];
-        source[\rateHz] = ~weatherRhythmRate.value(source[\sourceHz], config);
+        rawRate = ~weatherRhythmRate.value(source[\sourceHz], config); source[\rawRateHz] = rawRate;
+        if((config[\rhythmTiming] ? \continuous) == \quantized) {
+            rateInfo = ~weatherRhythmQuantizedRate.value(rawRate, source[\quantizedRatio], config);
+            source[\rateHz] = rateInfo[\rate]; source[\quantizedRatio] = rateInfo[\ratio];
+            if(isNew and: { config[\rhythmQuantizeAlign] ? true }) {
+                run[\rhythmAlignmentAnchor] = run[\rhythmAlignmentAnchor] ? now;
+                total = ((now - run[\rhythmAlignmentAnchor]).max(0) * source[\rateHz]);
+                source[\cycles] = total.floor.asInteger; source[\phase] = total.frac;
+                source[\emittedCycle] = total.floor.asInteger;
+            };
+        } {
+            source[\rateHz] = rawRate; source[\quantizedRatio] = nil;
+        };
+        source[\timingMode] = config[\rhythmTiming] ? \continuous;
         source[\normalized] = ~weatherRhythmNormalized.value(source[\level], config);
         source[\velocity] = if(mode == \velocity) { ~weatherRhythmVelocity.value(source[\level], config) } {
             (config[\rhythmConstantVelocity] ? 80).asInteger.clip(1, 127)

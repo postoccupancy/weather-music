@@ -67,6 +67,9 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~spectrumSetRhythmEnabled.value(true);
 ~spectrumSetRhythmRate.value(0.5, 5); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
+~spectrumSetRhythmTiming.value(\continuous); // direct mapped rates (default)
+~spectrumSetRhythmTiming.value(\quantized); // quantize mapped rates around a reference pulse
+~spectrumSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true); // reference Hz, ratios, hysteresis, shared alignment
 ~spectrumSetRhythmPulseDuration.value(1); // MIDI note duration in seconds
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110); // significance input and MIDI ranges
 
@@ -84,11 +87,19 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmEuclidean.value(8, 1, 8); // mapped pulse rate becomes pattern-cycle frequency
 
 // Sustained spectrum MIDI selection on Bus 3 (independent of rhythm selection)
-~spectrumSetToneSelection.value(\all, 48);
+~spectrumSetToneSelection.value(\all);
 ~spectrumSetToneSelection.value(\perBand, 3);
 ~spectrumSetToneSelection.value(\fixedBand, 3);
 ~spectrumSetToneSelection.value(\topN, 6);
 ~spectrumSetToneSelectionHysteresis.value(0.10, 5.0);
+
+// Sustained spectrum MIDI expression (one mode at a time)
+~spectrumSetToneExpression.value(\aftertouch); // default, per-note polyphonic aftertouch
+~spectrumSetToneExpression.value(\off);        // fixed note-on velocity only
+~spectrumSetToneExpression.value(\filter);     // one aggregate CC74 value per sensor channel
+~spectrumSetToneFilter.value(0, 127, 0.5, 2);  // min/max CC, smoothing seconds, deadband
+~spectrumSetToneExpression.value(\pitchBend);  // one aggregate channel bend
+~spectrumSetTonePitchBend.value(2.0, 0.5, 64); // matching instrument range, smoothing, 14-bit deadband
 
 // Note mapping -- are notes assigned by band or by sensor
 ~spectrumSetRhythmNoteMapping.value(\perBand);  // default
