@@ -321,13 +321,10 @@ if(~weatherLeaseAcquire.isNil) {
         ~cwtConfig[\rhythmPulseMinHz] = minimum; ~cwtConfig[\rhythmPulseMaxHz] = maximum;
     } { "Tracked rhythm rates require 0 < minimum <= maximum.".warn };
 };
-~cwtSetRhythmPulse = { |duration=0.08, velocityMin=35, velocityMax=110|
-    if(duration.isNumber and: { duration > 0 } and: { duration <= 2 }
-        and: { velocityMin.isInteger } and: { velocityMax.isInteger }
-        and: { velocityMin >= 1 } and: { velocityMax >= velocityMin } and: { velocityMax <= 127 }) {
-        ~cwtConfig[\rhythmPulseDuration] = duration; ~cwtConfig[\rhythmVelocityMin] = velocityMin;
-        ~cwtConfig[\rhythmVelocityMax] = velocityMax;
-    } { "Invalid tracked rhythm duration or velocity bounds.".warn };
+~cwtSetRhythmPulseDuration = { |duration=0.08|
+    if(duration.isNumber and: { duration > 0 } and: { duration <= 2 }) {
+        ~cwtConfig[\rhythmPulseDuration] = duration;
+    } { "Invalid tracked rhythm duration (allowed > 0 and <= 2 seconds).".warn };
 };
 ~cwtSetRhythmVelocity = { |inputFloor=0, inputCeiling=1, velocityMin=35, velocityMax=110|
     if(inputFloor.isNumber and: { inputCeiling.isNumber } and: { inputFloor >= 0 } and: { inputCeiling > inputFloor }

@@ -2,7 +2,7 @@
 
 `live-cwt.scd` and `live-spectrum.scd` can emit independent rhythmic MIDI pulses
 alongside their sustained MIDI tones. Sustained tones remain enabled by default on
-`IAC Driver / Bus 3 - Ableton Live`; rhythm is disabled by default and uses the
+`IAC Driver / Bus 3 - Ableton Live`; rhythm is enabled by default and uses the
 separate configurable destination `IAC Driver / Bus 4 - Ableton Rhythm`.
 
 Both outputs retain the channel ownership used by the sustained instruments:
@@ -30,7 +30,8 @@ default (30–240 pulses per minute). These bounds are explicit time compression
 ~spectrumSetRhythmRate.value(0.5, 4.0);
 ```
 
-Pulses default to 80 ms and MIDI velocities 35–110. Tracked velocity follows the
+Pulses default to 80 ms and MIDI velocities 35–110. Duration is controlled separately
+from velocity. Tracked velocity follows the
 existing effective amplitude after confidence, normalization, sensor gain, and mute.
 Spectrum velocity follows scale significance. Event bursts are bounded per scheduler
 step. Shared channel/note gates retain an owner per source, so one source ending does
@@ -46,7 +47,7 @@ unready state, stop, and restart release outstanding gates.
 ```supercollider
 ~cwtSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~cwtSetRhythmNotes.value([36, 38, 42, 45]);
-~cwtSetRhythmPulse.value(0.08, 35, 110);
+~cwtSetRhythmPulseDuration.value(0.08);
 ~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110);
 ~cwtSetRhythmEnabled.value(true);
 ~cwtRhythmStatus.value;
@@ -56,28 +57,41 @@ unready state, stop, and restart release outstanding gates.
 
 ## Full spectrum
 
-The default `perBand` selection chooses the most significant valid scale in each of
-three bands: 0.05–0.12 Hz, 0.12–0.35 Hz, and 0.35–1 Hz. With the default `perBand`
-note mapping these use notes 36, 38, and 42 on each sensor's existing channel. The
-`topN` mode chooses the N most significant scales per sensor. `perSensor` note mapping
-uses temperature 36, humidity 38, and pressure 42 for every selected scale.
+The second selection argument is a count from 1 to 48. The 48 CWT scales are divided
+into that many contiguous frequency bands, ordered from slow to fast, with sizes that
+differ by at most one scale. Three bands contain 16 scales each; six contain eight.
+`perBand` chooses the most significant eligible scale in each band and keeps that
+scale's identity and phase while it remains the winner. `topN` instead chooses the N
+most significant scales across the whole sensor spectrum.
+
+`fixedBand` creates one persistent source for every automatic band. Its environmental
+frequency is the geometric mean of the band's fixed scale frequencies, so its mapped
+pulse rate never drifts with significance. Its velocity follows the mean current
+significance of every scale in the band. At or below `rhythmActivityThreshold` (zero
+by default), note-ons stop while phase continues to advance.
+
+With `perBand` note mapping, band notes are ordered slow to fast. If the note array is
+shorter than N it repeats with `wrapAt`; an empty array is rejected. `perSensor` uses
+temperature 36, humidity 38, and pressure 42 for every source.
 
 ```supercollider
 ~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~spectrumSetRhythmSelection.value(\perBand, 3);
+~spectrumSetRhythmSelection.value(\fixedBand, 6);
 ~spectrumSetRhythmSelection.value(\topN, 4);
 ~spectrumSetRhythmNoteMapping.value(\perBand); // or \perSensor
-~spectrumSetRhythmBands.value([[0.05, 0.12], [0.12, 0.35], [0.35, 1.000001]]);
 ~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42);
+~spectrumSetRhythmPulseDuration.value(0.08);
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110);
+~spectrumSetRhythmActivityThreshold.value(0.0);
 ~spectrumSetRhythmEnabled.value(true);
 ~spectrumRhythmStatus.value;
 ~spectrumRhythmResync.value;
 ~spectrumRhythmPanic.value;
 ```
 
-The bands and note tables are arrays in `~spectrumConfig` for live customization:
-`rhythmBands`, `rhythmBandNotes`, and `rhythmSensorNotes`.
+The note tables remain available as `rhythmBandNotes` and `rhythmSensorNotes` in
+`~spectrumConfig`; frequency boundaries are derived from the received scale order.
 
 ## Ableton Live 12 Intro
 

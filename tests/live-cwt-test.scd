@@ -34,6 +34,11 @@ check.value((~cwtMapPitch.value(0.05, ~cwtConfig, nil, \temperature)[\hz] - 60.m
 check.value((~cwtMapPitch.value(1, ~cwtConfig, nil, \temperature)[\hz] - 84.midicps).abs < 1e-8, "sensor span override");
 ~cwtSetBaseNote.value(nil, \temperature); ~cwtSetPitchSpan.value(nil, \temperature);
 check.value((~cwtMapPitch.value(0.05, ~cwtConfig, nil, \temperature)[\hz] - 48.midicps).abs < 1e-8, "sensor pitch overrides clear");
+~cwtConfig[\rhythmVelocityMin] = 35; ~cwtConfig[\rhythmVelocityMax] = 110;
+~cwtSetRhythmPulseDuration.value(0.12);
+check.value(~cwtConfig[\rhythmPulseDuration] == 0.12
+    and: { ~cwtConfig[\rhythmVelocityMin] == 35 } and: { ~cwtConfig[\rhythmVelocityMax] == 110 },
+    "tracked pulse-duration control does not alter velocity mapping");
 ~cwtConfig[\routerIP] = "127.0.0.1";
 ~cwtConfig[\routerPort] = 50055;
 ~cwtConfig[\localPort] = 19001;

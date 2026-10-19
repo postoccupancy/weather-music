@@ -31,7 +31,16 @@ desired["b"][\sourceHz] = 0.2; ~weatherRhythmSync.value(run, desired, 0.35, conf
 check.value(run[\rhythmSources]["b"][\phase] == 0.25, "frequency update retains phase before the next step");
 ~weatherRhythmStep.value(run, 0.45, config, emit);
 check.value(run[\rhythmSources]["b"][\phase] > 0.35, "new frequency changes subsequent phase rate");
-messages.clear; ~weatherRhythmStep.value(run, 0.56, config, emit);
+desired["b"][\active] = false; messages.clear;
+~weatherRhythmSync.value(run, desired, 0.45, config, emit);
+run[\rhythmSources]["b"][\phase] = 0.9;
+~weatherRhythmStep.value(run, 0.55, config, emit);
+check.value(messages.every { |m| m[0] != \noteOn }
+    and: { messages.any { |m| m[0] == \noteOff } }
+    and: { run[\rhythmSources]["b"][\phase] != 0.9 }, "inactive source releases its gate and advances phase without note-ons");
+desired["b"][\active] = true; ~weatherRhythmSync.value(run, desired, 0.55, config, emit);
+run[\rhythmSources]["b"][\phase] = 0.99; messages.clear; ~weatherRhythmStep.value(run, 0.56, config, emit);
+messages.clear; ~weatherRhythmStep.value(run, 0.8, config, emit);
 check.value(messages.any { |m| m[0] == \noteOff }, "gate ends after its final owner expires");
 messages.clear; ~weatherRhythmResync.value(run, 0.7, config, emit);
 check.value(messages.any { |m| m[0] == \noteOn } and: { run[\rhythmSources].size == 1 }, "rhythm resync resends active sources");

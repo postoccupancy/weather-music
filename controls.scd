@@ -42,27 +42,43 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtMidiPanic.value;
 ~cwtMidiResync.value;                        // resend sustained notes after changing instruments
 
-// RHYTHMIC MIDI — disabled by default; separate IAC bus, no global tempo/grid
+// RHYTHMIC MIDI — enabled by default; separate IAC bus, no global tempo/grid
+
+// Tracked Voices Rhythms (Ch 4-16)
 ~cwtSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~cwtSetRhythmEnabled.value(true);
-~cwtSetRhythmRate.value(0.5, 4.0);            // slowest/fastest mapped pulse rates in Hz
-~cwtSetRhythmPulse.value(0.08, 35, 110);      // duration seconds, velocity minimum/maximum
-~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110);// amplitude input range, MIDI output range
+~cwtSetRhythmRate.value(1, 4.0); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
+~cwtSetRhythmPulseDuration.value(0.08); // MIDI note duration in seconds
+~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110); // amplitude input range maps to MIDI output range -- how strongly a weather effect hits
+
 ~cwtSetRhythmNotes.value([36, 38, 42, 45]);   // deterministic channel-slot notes
+
 ~cwtRhythmStatus.value;
 ~cwtRhythmResync.value;
 ~cwtRhythmPanic.value;
 
+// Spectrum Rhythms (Ch 1-3)
 ~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~spectrumSetRhythmEnabled.value(true);
-~spectrumSetRhythmRate.value(0.5, 4.0);
-~spectrumSetRhythmPulse.value(0.08, 35, 110);
+~spectrumSetRhythmRate.value(0.5, 5); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
+~spectrumSetRhythmPulseDuration.value(1); // MIDI note duration in seconds
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110); // significance input and MIDI ranges
-~spectrumSetRhythmSelection.value(\perBand, 3); // or \topN with count 1..48
-~spectrumSetRhythmNoteMapping.value(\perBand);  // or \perSensor
-~spectrumSetRhythmBands.value([[0.05, 0.12], [0.12, 0.35], [0.35, 1.000001]]);
-~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42); // band notes, then sensor notes
-// 36 = kick drum, 38 = snare, 42 = hihat (808 core kit)
+
+// Selection
+~spectrumSetRhythmSelection.value(\perBand, 3); // strongest eligible scale in each of N automatic bands
+~spectrumSetRhythmSelection.value(\fixedBand, 3); // N persistent bands with mean-significance expression
+~spectrumSetRhythmSelection.value(\topN, 1); // strongest N scales across each sensor, count 1..48
+~spectrumSetRhythmActivityThreshold.value(0.0); // fixedBand suppresses pulses at/below this significance
+
+// Note mapping -- are notes assigned by band or by sensor
+~spectrumSetRhythmNoteMapping.value(\perBand);  // default
+~spectrumSetRhythmNoteMapping.value(\perSensor);
+
+// Notes - 36 = kick drum, 38 = snare, 42 = hihat (808 core kit)
+~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42);
+// band notes [slow, medium, fast] if in perBand note mapping; shorter arrays repeat
+// sensor notes: temp, hum, pres if in perSensor note mapping
+
 ~spectrumRhythmStatus.value;
 ~spectrumRhythmResync.value;
 ~spectrumRhythmPanic.value;
@@ -73,9 +89,10 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumInspect.value(\temperature, 0);       // sensor and scale index
 
 // TRACKED VOICES — selection, pitch, waveform, and master
-~cwtConfig[\maxPolyphony] = 144;               // default 4; nonnegative hard ceiling
+~cwtConfig[\maxPolyphony] = 4;               // default 4; nonnegative hard ceiling
 ~cwtSetMinConfidence.value(0.0);             // default 0; valid 0..1
-~cwtConfig[\pitchMode] = \continuous;        // default; or \quantized
+~cwtConfig[\pitchMode] = \continuous; // default; includes pitch bends
+~cwtConfig[\pitchMode] = \quantized; // no pitch bends
 ~cwtConfig[\pitchHysteresis] = 0.1;           // quantized semitone margin; selection is unchanged
 ~cwtSetBaseNote.value(24);                   // default 48; MIDI coordinate 24..72
 ~cwtSetPitchSpan.value(16);                  // default 36; 12..72 semitones

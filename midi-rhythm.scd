@@ -39,6 +39,9 @@
             if((source[\channel] != wanted[\channel]) or: { source[\note] != wanted[\note] }) {
                 ~weatherRhythmReleaseOwner.value(run, key, emit);
             };
+            if((source[\active] ? true) and: { (wanted[\active] ? true).not }) {
+                ~weatherRhythmReleaseOwner.value(run, key, emit);
+            };
             wanted.keysValuesDo { |field, value| source[field] = value };
         };
         source[\rateHz] = ~weatherRhythmRate.value(source[\sourceHz], config);
@@ -64,7 +67,7 @@
             var pulses, gateKey, gate;
             source[\phase] = source[\phase] + (dt * source[\rateHz]); source[\lastTime] = now;
             pulses = source[\phase].floor.asInteger.min(maxEvents); source[\phase] = source[\phase] - pulses;
-            pulses.do {
+            if(source[\active] ? true) { pulses.do {
                 gateKey = source[\channel].asString ++ "/" ++ source[\note].asString;
                 gate = run[\rhythmGates][gateKey];
                 if(gate.isNil) {
@@ -73,7 +76,7 @@
                 };
                 gate[\owners][key] = now + duration;
                 emit.value(run[\rhythmOut], \noteOn, source[\channel], source[\note], source[\velocity]);
-            };
+            } };
         };
     };
 };
@@ -92,10 +95,12 @@
     if(run.notNil and: { run[\rhythmConnected] }) {
         run[\rhythmSources].keys.asArray.sort.do { |key|
             var source = run[\rhythmSources][key], gateKey, gate;
-            gateKey = source[\channel].asString ++ "/" ++ source[\note].asString;
-            gate = run[\rhythmGates][gateKey] ? (channel: source[\channel], note: source[\note], owners: Dictionary.new);
-            run[\rhythmGates][gateKey] = gate; gate[\owners][key] = now + (config[\rhythmPulseDuration] ? 0.08);
-            emit.value(run[\rhythmOut], \noteOn, source[\channel], source[\note], source[\velocity]);
+            if(source[\active] ? true) {
+                gateKey = source[\channel].asString ++ "/" ++ source[\note].asString;
+                gate = run[\rhythmGates][gateKey] ? (channel: source[\channel], note: source[\note], owners: Dictionary.new);
+                run[\rhythmGates][gateKey] = gate; gate[\owners][key] = now + (config[\rhythmPulseDuration] ? 0.08);
+                emit.value(run[\rhythmOut], \noteOn, source[\channel], source[\note], source[\velocity]);
+            };
             source[\lastTime] = now;
         };
     };

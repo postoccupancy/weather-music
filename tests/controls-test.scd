@@ -12,22 +12,22 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
     \cwtSetMidiDestination, \cwtSetMidiEnabled, \cwtSetMidiBendRange,
     \cwtSetMidiExpression, \cwtMidiStatus, \cwtMidiPanic, \cwtMidiResync,
     \cwtSetToneEnabled, \cwtSetRhythmDestination, \cwtSetRhythmEnabled, \cwtSetRhythmRate,
-    \cwtSetRhythmPulse, \cwtSetRhythmVelocity, \cwtSetRhythmNotes, \cwtRhythmStatus, \cwtRhythmResync, \cwtRhythmPanic,
+    \cwtSetRhythmPulseDuration, \cwtSetRhythmVelocity, \cwtSetRhythmNotes, \cwtRhythmStatus, \cwtRhythmResync, \cwtRhythmPanic,
     \spectrumSetMode, \spectrumSetGain, \spectrumMute, \spectrumSetBaseNote,
     \spectrumSetPitchSpan, \spectrumSetWaveform, \spectrumSetOutputBus,
     \spectrumStatus, \spectrumInspect, \spectrumStop, \spectrumStart,
     \spectrumSetMidiDestination, \spectrumSetMidiEnabled, \spectrumSetMidiChannel,
     \spectrumSetMidiExpression, \spectrumMidiStatus, \spectrumMidiPanic,
     \spectrumSetToneEnabled, \spectrumSetRhythmDestination, \spectrumSetRhythmEnabled,
-    \spectrumSetRhythmRate, \spectrumSetRhythmPulse, \spectrumSetRhythmVelocity, \spectrumSetRhythmSelection,
-    \spectrumSetRhythmBands, \spectrumSetRhythmNotes, \spectrumSetRhythmNoteMapping,
+    \spectrumSetRhythmRate, \spectrumSetRhythmPulseDuration, \spectrumSetRhythmVelocity, \spectrumSetRhythmSelection,
+    \spectrumSetRhythmActivityThreshold, \spectrumSetRhythmNotes, \spectrumSetRhythmNoteMapping,
     \spectrumRhythmStatus, \spectrumRhythmResync, \spectrumRhythmPanic
 ].do { |name| currentEnvironment.put(name, { |...args| calls.add([name] ++ args) }) };
 
 controlsPath = thisProcess.nowExecutingPath.dirname +/+ "../controls.scd";
 controlsPath.load;
 
-check.value(~cwtConfig[\maxPolyphony] == 144, "tracked configuration commands execute");
+check.value(~cwtConfig[\maxPolyphony] == 4, "tracked configuration commands execute");
 check.value(~spectrumConfig[\masterGain] == 1.0, "spectrum configuration commands execute");
 check.value(calls.any { |call| call[0] == \cwtSetMinConfidence }, "tracked control API is callable");
 check.value(calls.any { |call| call[0] == \spectrumSetWaveform }, "spectrum control API is callable");
