@@ -50,7 +50,10 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtSetRhythmRate.value(1, 4.0); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
 ~cwtSetRhythmPulseDuration.value(0.08); // MIDI note duration in seconds
 ~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110); // amplitude input range maps to MIDI output range -- how strongly a weather effect hits
-~cwtSetRhythmExpression.value(\velocity); // or \off, \phase, \euclidean
+~cwtSetRhythmExpression.value(\off);
+~cwtSetRhythmExpression.value(\velocity);
+~cwtSetRhythmExpression.value(\phase);
+~cwtSetRhythmExpression.value(\euclidian);
 ~cwtSetRhythmConstantVelocity.value(80); // used by off, phase, and euclidean
 ~cwtSetRhythmPhase.value(0.25, 2.0); // maximum cycles, smoothing seconds
 ~cwtSetRhythmEuclidean.value(8, 1, 8); // steps per cycle, minimum hits, maximum hits
@@ -74,26 +77,44 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110); // significance input and MIDI ranges
 
 // Selection
-~spectrumSetRhythmSelection.value(\perBand, 3); // strongest eligible scale in each of N automatic bands
-~spectrumSetRhythmSelection.value(\fixedBand, 3); // N persistent bands with mean-significance expression
-~spectrumSetRhythmSelection.value(\topN, 1); // strongest N scales across each sensor, count 1..48
+~spectrumSetRhythmSelection.value(\perBand, 3); // default - mid variation - strongest eligible scale in each of N automatic bands
+~spectrumSetRhythmSelection.value(\fixedBand, 3); // least variation - N persistent bands with mean-significance expression
+~spectrumSetRhythmSelection.value(\topN, 3); // most variation - strongest N scales across each sensor, count 1..48
 ~spectrumSetRhythmActivityThreshold.value(0.0); // fixedBand suppresses pulses at/below this significance
 ~spectrumSetRhythmSelectionHysteresis.value(0.20, 30.0); // relative margin, residence seconds
 
+// Spectrum Rhythm note mapping -- are notes assigned by band or by sensor
+~spectrumSetRhythmNoteMapping.value(\perBand);  // default
+~spectrumSetRhythmNoteMapping.value(\perSensor);
+
+// Notes - 36 = kick drum, 38 = snare, 42 = hihat (808 core kit)
+~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42);
+// band notes [slow, medium, fast] if in perBand note mapping; shorter arrays repeat
+// one note per channel 1, 2, 3 if in perSensor note mapping
+
+~spectrumRhythmStatus.value;
+~spectrumRhythmResync.value;
+~spectrumRhythmPanic.value;
+
 // Rhythm expression
-~spectrumSetRhythmExpression.value(\velocity); // or \off, \phase, \euclidean
+~spectrumSetRhythmExpression.value(\off);
+~spectrumSetRhythmExpression.value(\velocity);
+~spectrumSetRhythmExpression.value(\phase);
+~spectrumSetRhythmExpression.value(\euclidian);
 ~spectrumSetRhythmConstantVelocity.value(80);
 ~spectrumSetRhythmPhase.value(0.25, 2.0); // maximum cycles, smoothing seconds
 ~spectrumSetRhythmEuclidean.value(8, 1, 8); // mapped pulse rate becomes pattern-cycle frequency
 
-// Sustained spectrum MIDI selection on Bus 3 (independent of rhythm selection)
+
+
+// Spectrum MIDI selection on Bus 3 (independent of rhythm selection)
 ~spectrumSetToneSelection.value(\all);
-~spectrumSetToneSelection.value(\perBand, 3);
-~spectrumSetToneSelection.value(\fixedBand, 3);
-~spectrumSetToneSelection.value(\topN, 6);
+~spectrumSetToneSelection.value(\perBand, 4);
+~spectrumSetToneSelection.value(\fixedBand, 4);
+~spectrumSetToneSelection.value(\topN, 4);
 ~spectrumSetToneSelectionHysteresis.value(0.10, 5.0);
 
-// Sustained spectrum MIDI expression (one mode at a time)
+// Spectrum MIDI expression (one mode at a time)
 ~spectrumSetToneExpression.value(\aftertouch); // default, per-note polyphonic aftertouch
 ~spectrumSetToneExpression.value(\off);        // fixed note-on velocity only
 ~spectrumSetToneExpression.value(\filter);     // one aggregate CC74 value per sensor channel
@@ -101,18 +122,19 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetToneExpression.value(\pitchBend);  // one aggregate channel bend
 ~spectrumSetTonePitchBend.value(2.0, 0.5, 64); // matching instrument range, smoothing, 14-bit deadband
 
-// Note mapping -- are notes assigned by band or by sensor
-~spectrumSetRhythmNoteMapping.value(\perBand);  // default
-~spectrumSetRhythmNoteMapping.value(\perSensor);
+// Spectrum MIDI pitch and per-sensor waveform
+~spectrumSetBaseNote.value(36);                // default 48; valid 24..72
+~spectrumSetPitchSpan.value(12);               // default 48; 12..72 semitones
+~spectrumSetBaseNote.value(60, \temperature);  // set optional sensor override
+~spectrumSetBaseNote.value(nil, \temperature); // clear optional sensor override
+~spectrumSetPitchSpan.value(24, \temperature); // set optional sensor override
+~spectrumSetPitchSpan.value(nil, \temperature);// clear optional sensor override
+~spectrumSetWaveform.value(\temperature, \sine);
+~spectrumSetWaveform.value(\humidity, \triangle);
+~spectrumSetWaveform.value(\pressure, \saw);
 
-// Notes - 36 = kick drum, 38 = snare, 42 = hihat (808 core kit)
-~spectrumSetRhythmNotes.value([36, 38, 42], 36, 38, 42);
-// band notes [slow, medium, fast] if in perBand note mapping; shorter arrays repeat
-// sensor notes: temp, hum, pres if in perSensor note mapping
 
-~spectrumRhythmStatus.value;
-~spectrumRhythmResync.value;
-~spectrumRhythmPanic.value;
+
 
 // DIAGNOSTICS
 ~cwtStatus.value;
@@ -125,25 +147,14 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtConfig[\pitchMode] = \continuous; // default; includes pitch bends
 ~cwtConfig[\pitchMode] = \quantized; // no pitch bends
 ~cwtConfig[\pitchHysteresis] = 0.1;           // quantized semitone margin; selection is unchanged
-~cwtSetBaseNote.value(24);                   // default 48; MIDI coordinate 24..72
-~cwtSetPitchSpan.value(16);                  // default 36; 12..72 semitones
+~cwtSetBaseNote.value(36);                   // default 48; MIDI coordinate 24..72
+~cwtSetPitchSpan.value(12);                  // default 36; 12..72 semitones
 ~cwtSetBaseNote.value(36, \temperature);     // set optional sensor override
 ~cwtSetBaseNote.value(nil, \temperature);    // clear optional sensor override
 ~cwtSetPitchSpan.value(24, \temperature);    // set optional sensor override
 ~cwtSetPitchSpan.value(nil, \temperature);   // clear optional sensor override
 ~cwtSetWaveform.value(\sine);                // \sine, \triangle, or \saw
 ~cwtConfig[\masterVolume] = 0.8;             // default 0.8; 0 silences output
-
-// FULL SPECTRUM — pitch and per-sensor waveform
-~spectrumSetBaseNote.value(36);                // default 48; valid 24..72
-~spectrumSetPitchSpan.value(48);               // default 48; 12..72 semitones
-~spectrumSetBaseNote.value(60, \temperature);  // set optional sensor override
-~spectrumSetBaseNote.value(nil, \temperature); // clear optional sensor override
-~spectrumSetPitchSpan.value(24, \temperature); // set optional sensor override
-~spectrumSetPitchSpan.value(nil, \temperature);// clear optional sensor override
-~spectrumSetWaveform.value(\temperature, \sine);
-~spectrumSetWaveform.value(\humidity, \triangle);
-~spectrumSetWaveform.value(\pressure, \saw);
 
 // TRACKED VOICES — per-sensor gain and mute
 // Mute smoothly silences the sensor while retaining selection and tracking state.
