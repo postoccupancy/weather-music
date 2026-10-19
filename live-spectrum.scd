@@ -64,7 +64,7 @@ if(~weatherLeaseAcquire.isNil) {
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
     rhythmSelection: \perBand, rhythmSelectionCount: 3, rhythmActivityThreshold: 0.0,
     rhythmSelectionMargin: 0.0, rhythmSelectionResidence: 0.0,
-    rhythmTiming: \continuous, rhythmQuantizeReferenceHz: 2.0,
+    rhythmTiming: \quantized, rhythmQuantizeReferenceHz: 2.0,
     rhythmQuantizeRatios: [0.5, 1.0, 2.0], rhythmQuantizeHysteresis: 0.10, rhythmQuantizeAlign: true,
     rhythmExpression: \velocity, rhythmConstantVelocity: 80,
     rhythmPhaseMaxCycles: 0.25, rhythmPhaseSmoothing: 2.0,
@@ -724,7 +724,7 @@ if(~weatherLeaseAcquire.isNil) {
         ~spectrumConfig[\rhythmPulseMinHz] = minimum; ~spectrumConfig[\rhythmPulseMaxHz] = maximum;
     } { "Spectrum rhythm rates require 0 < minimum <= maximum.".warn };
 };
-~spectrumSetRhythmTiming = { |mode=\continuous|
+~spectrumSetRhythmTiming = { |mode=\quantized|
     if([\continuous, \quantized].includes(mode)) {
         ~spectrumConfig[\rhythmTiming] = mode;
         if(mode == \quantized and: { ~spectrumRun.notNil }) {

@@ -65,6 +65,8 @@ if(~weatherLeaseAcquire.isNil) {
     rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
     rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 1.0,
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
+    rhythmTiming: \quantized, rhythmQuantizeReferenceHz: 2.0,
+    rhythmQuantizeRatios: [0.5, 1.0, 2.0], rhythmQuantizeHysteresis: 0.10, rhythmQuantizeAlign: true,
     rhythmExpression: \velocity, rhythmConstantVelocity: 80,
     rhythmPhaseMaxCycles: 0.25, rhythmPhaseSmoothing: 2.0,
     rhythmEuclideanSteps: 8, rhythmEuclideanMinHits: 1, rhythmEuclideanMaxHits: 8,
@@ -330,6 +332,29 @@ if(~weatherLeaseAcquire.isNil) {
         ~cwtConfig[\rhythmPulseMinHz] = minimum; ~cwtConfig[\rhythmPulseMaxHz] = maximum;
     } { "Tracked rhythm rates require 0 < minimum <= maximum.".warn };
 };
+~cwtSetRhythmTiming = { |mode=\quantized|
+    if([\continuous, \quantized].includes(mode)) {
+        ~cwtConfig[\rhythmTiming] = mode;
+        if(mode == \quantized and: { ~cwtRun.notNil }) {
+            ~cwtRun[\rhythmAlignmentAnchor] = Main.elapsedTime;
+        };
+    } { "Tracked rhythm timing must be continuous or quantized.".warn };
+};
+~cwtSetRhythmQuantization = { |reference=2.0, ratios=#[0.5, 1, 2], hysteresis=0.10, align=true|
+    if(reference.isNumber and: { reference > 0 }
+        and: { ratios.isArray } and: { ratios.notEmpty }
+        and: { ratios.every { |ratio| ratio.isNumber and: { ratio > 0 } } }
+        and: { hysteresis.isNumber } and: { hysteresis >= 0 }
+        and: { [true,false].includes(align) }) {
+        ~cwtConfig[\rhythmQuantizeReferenceHz] = reference;
+        ~cwtConfig[\rhythmQuantizeRatios] = ratios.asArray.sort;
+        ~cwtConfig[\rhythmQuantizeHysteresis] = hysteresis;
+        ~cwtConfig[\rhythmQuantizeAlign] = align;
+        if(~cwtRun.notNil and: { align } and: { ~cwtRun[\rhythmSources].isEmpty }) {
+            ~cwtRun[\rhythmAlignmentAnchor] = Main.elapsedTime
+        };
+    } { "Tracked rhythm quantization requires reference > 0, positive ratios, nonnegative hysteresis, and boolean alignment.".warn };
+};
 ~cwtSetRhythmPulseDuration = { |duration=0.08|
     if(duration.isNumber and: { duration > 0 } and: { duration <= 2 }) {
         ~cwtConfig[\rhythmPulseDuration] = duration;
@@ -455,6 +480,7 @@ if(~weatherLeaseAcquire.isNil) {
         synths: Dictionary.new, midiVoices: Dictionary.new, midiOut: nil,
         midiConnected: false, midiError: nil, rhythmOut: nil, rhythmConnected: false,
         rhythmError: nil, rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, rhythmCursor: 0,
+        rhythmAlignmentAnchor: Main.elapsedTime,
         toneSelectionState: Dictionary.new, rhythmSelectionState: Dictionary.new, lastDiagnostic: 0);
     ~cwtRun = run;
     ~cwtMidiConnect.value(run);

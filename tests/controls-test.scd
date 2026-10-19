@@ -14,6 +14,7 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
     \cwtSetToneEnabled, \cwtSetRhythmDestination, \cwtSetRhythmEnabled, \cwtSetRhythmRate,
     \cwtSetRhythmPulseDuration, \cwtSetRhythmVelocity, \cwtSetRhythmNotes, \cwtRhythmStatus, \cwtRhythmResync, \cwtRhythmPanic,
     \cwtSetRhythmExpression, \cwtSetRhythmConstantVelocity, \cwtSetRhythmPhase, \cwtSetRhythmEuclidean,
+    \cwtSetRhythmTiming, \cwtSetRhythmQuantization,
     \cwtSetSelectionHysteresis, \cwtSetRhythmSelectionHysteresis,
     \spectrumSetMode, \spectrumSetGain, \spectrumMute, \spectrumSetBaseNote,
     \spectrumSetPitchSpan, \spectrumSetWaveform, \spectrumSetOutputBus,

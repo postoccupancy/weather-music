@@ -48,6 +48,9 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~cwtSetRhythmEnabled.value(true);
 ~cwtSetRhythmRate.value(1, 4.0); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
+~cwtSetRhythmTiming.value(\quantized); // default: ratios around a shared reference pulse
+~cwtSetRhythmTiming.value(\continuous); // optional direct mapped rates
+~cwtSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true); // reference Hz, ratios, hysteresis, shared alignment
 ~cwtSetRhythmPulseDuration.value(0.08); // MIDI note duration in seconds
 ~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110); // amplitude input range maps to MIDI output range -- how strongly a weather effect hits
 ~cwtSetRhythmExpression.value(\off);
@@ -70,8 +73,8 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmDestination.value("IAC Driver", "Bus 4 - Ableton Rhythm");
 ~spectrumSetRhythmEnabled.value(true);
 ~spectrumSetRhythmRate.value(0.5, 5); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
-~spectrumSetRhythmTiming.value(\continuous); // direct mapped rates (default)
-~spectrumSetRhythmTiming.value(\quantized); // quantize mapped rates around a reference pulse
+~spectrumSetRhythmTiming.value(\quantized); // default: ratios around a shared reference pulse
+~spectrumSetRhythmTiming.value(\continuous); // optional direct mapped rates
 ~spectrumSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true); // reference Hz, ratios, hysteresis, shared alignment
 ~spectrumSetRhythmPulseDuration.value(1); // MIDI note duration in seconds
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110); // significance input and MIDI ranges
@@ -82,6 +85,8 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmSelection.value(\topN, 3); // most variation - strongest N scales across each sensor, count 1..48
 ~spectrumSetRhythmActivityThreshold.value(0.0); // fixedBand suppresses pulses at/below this significance
 ~spectrumSetRhythmSelectionHysteresis.value(0.20, 30.0); // relative margin, residence seconds
+// Relative margin = the challenger must be this % more significant to knock out an existing rhythm
+// Residence seconds = once initiated, an existing rhythm cannot be challenged for X seconds
 
 // Spectrum Rhythm note mapping -- are notes assigned by band or by sensor
 ~spectrumSetRhythmNoteMapping.value(\perBand);  // default
@@ -100,7 +105,7 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmExpression.value(\off);
 ~spectrumSetRhythmExpression.value(\velocity);
 ~spectrumSetRhythmExpression.value(\phase);
-~spectrumSetRhythmExpression.value(\euclidian);
+~spectrumSetRhythmExpression.value(\euclidean);
 ~spectrumSetRhythmConstantVelocity.value(80);
 ~spectrumSetRhythmPhase.value(0.25, 2.0); // maximum cycles, smoothing seconds
 ~spectrumSetRhythmEuclidean.value(8, 1, 8); // mapped pulse rate becomes pattern-cycle frequency

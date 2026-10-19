@@ -15,6 +15,7 @@ check.value(~spectrumSignificance.value([1, 0, 0, 0, 0, 0]).isNil, "missing back
 check.value((~spectrumPitch.value(0.05) - 48.midicps).abs < 1e-8, "pitch low");
 check.value((~spectrumPitch.value(1) - 96.midicps).abs < 1e-8, "pitch high at default 48-semitone span");
 check.value(~spectrumConfig[\midiEnabled], "MIDI enabled by default");
+check.value(~spectrumConfig[\rhythmTiming] == \quantized, "spectrum rhythm timing defaults to quantized");
 check.value(~spectrumConfig[\mode] == \significance and: { ~spectrumConfig[\significanceGain] == 0.001 },
     "significance mode and conservative gain are defaults");
 check.value(~spectrumConfig[\midiExpressionCeiling] == 0.005, "default MIDI expression range matches significance targets");

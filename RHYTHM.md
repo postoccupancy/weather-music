@@ -30,16 +30,20 @@ default (30–240 pulses per minute). These bounds are explicit time compression
 ~spectrumSetRhythmRate.value(0.5, 4.0);
 ```
 
-Spectrum rhythm timing defaults to `continuous`, which uses those mapped rates
-directly and has no shared clock. `quantized` snaps each mapped rate to an allowed
-ratio of a reference pulse. The default 2 Hz reference and `[0.5, 1, 2]` ratios yield
-1, 2, or 4 Hz. Rate hysteresis prevents small mapped-rate changes near a boundary
-from repeatedly changing ratios.
+Both spectrum and tracked-voice rhythm timing default to `quantized`, which snaps
+each mapped rate to an allowed ratio of a reference pulse. The default 2 Hz reference
+and `[0.5, 1, 2]` ratios yield 1, 2, or 4 Hz. Rate hysteresis prevents small mapped-rate
+changes near a boundary from repeatedly changing ratios. `continuous` remains
+available and uses mapped rates directly without a shared clock.
 
 ```supercollider
 ~spectrumSetRhythmTiming.value(\continuous);
 ~spectrumSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true);
 ~spectrumSetRhythmTiming.value(\quantized);
+
+~cwtSetRhythmTiming.value(\continuous);
+~cwtSetRhythmQuantization.value(2.0, [0.5, 1, 2], 0.10, true);
+~cwtSetRhythmTiming.value(\quantized);
 ```
 
 When alignment is enabled, quantized sources created while the quantized mode is

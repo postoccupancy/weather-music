@@ -16,6 +16,7 @@ check = { |condition, label|
     if(condition.not) { ("FAIL: " ++ label).postln; ~cwtStop.value; s.quit; 1.exit } { ("PASS: " ++ label).postln };
 };
 check.value((~cwtMapPitch.value(0.1371254, ~cwtConfig)[\hz] - 263.50194232597).abs < 1e-8, "continuous JS parity");
+check.value(~cwtConfig[\rhythmTiming] == \quantized, "tracked rhythm timing defaults to quantized");
 ~cwtConfig[\pitchMode] = \midi;
 check.value((~cwtMapPitch.value(0.1371254, ~cwtConfig)[\hz] - 261.6255653006).abs < 1e-8, "quantized JS parity");
 ~cwtConfig[\pitchMode] = \midiOutput;
