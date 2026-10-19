@@ -37,6 +37,42 @@ Spectrum velocity follows scale significance. Event bursts are bounded per sched
 step. Shared channel/note gates retain an owner per source, so one source ending does
 not prematurely turn off another source's overlapping note.
 
+`rhythmMaxEventsPerTick` is a global budget across all sources. The scheduler rotates
+the first source considered on later ticks, so a dense source set cannot let one
+source monopolize the budget or permanently starve later sources.
+
+## Expression modes
+
+Tone/rhythm source selection and rhythm expression are independent. Both sketches
+support the same four mutually exclusive expression modes:
+
+- `off`: fixed velocity; amplitude does not alter rhythm expression.
+- `velocity`: maps normalized amplitude to the configured velocity range. This is the default.
+- `phase`: uses fixed velocity and smoothly displaces pulse phase by at most 0.25 cycles by default.
+- `euclidean`: uses fixed velocity and maps amplitude to the number of evenly distributed hits.
+
+`SetRhythmVelocity` supplies the normalization input range in every mode. The velocity
+output range is used only by `velocity`; the other modes use `rhythmConstantVelocity`.
+Phase displacement is bounded and never accumulates. The underlying oscillator keeps
+running while the offset moves in or out, preventing retriggers when modes change.
+
+In Euclidean mode the mapped environmental pulse rate is the **whole pattern-cycle
+frequency**. With eight steps, the diagnostic step rate is eight times the cycle rate.
+Density changes take effect only at a cycle boundary and have hysteresis; every source
+retains its independent phase and there is no shared clock.
+
+```supercollider
+~cwtSetRhythmExpression.value(\velocity); // \off, \phase, or \euclidean
+~cwtSetRhythmConstantVelocity.value(80);
+~cwtSetRhythmPhase.value(0.25, 2.0);
+~cwtSetRhythmEuclidean.value(8, 1, 8, 0.08); // steps, min/max hits, density hysteresis
+
+~spectrumSetRhythmExpression.value(\phase);
+~spectrumSetRhythmConstantVelocity.value(80);
+~spectrumSetRhythmPhase.value(0.25, 2.0);
+~spectrumSetRhythmEuclidean.value(8, 1, 8, 0.08);
+```
+
 ## Tracked voices
 
 The existing confidence selection and four-voice default are unchanged. A selected
@@ -49,6 +85,8 @@ unready state, stop, and restart release outstanding gates.
 ~cwtSetRhythmNotes.value([36, 38, 42, 45]);
 ~cwtSetRhythmPulseDuration.value(0.08);
 ~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110);
+~cwtSetSelectionHysteresis.value(0.20, 30.0);       // sustained/audio selection
+~cwtSetRhythmSelectionHysteresis.value(0.20, 30.0); // independent rhythm selection
 ~cwtSetRhythmEnabled.value(true);
 ~cwtRhythmStatus.value;
 ~cwtRhythmResync.value;
@@ -84,6 +122,7 @@ temperature 36, humidity 38, and pressure 42 for every source.
 ~spectrumSetRhythmPulseDuration.value(0.08);
 ~spectrumSetRhythmVelocity.value(0.0, 4.0, 35, 110);
 ~spectrumSetRhythmActivityThreshold.value(0.0);
+~spectrumSetRhythmSelectionHysteresis.value(0.20, 30.0);
 ~spectrumSetRhythmEnabled.value(true);
 ~spectrumRhythmStatus.value;
 ~spectrumRhythmResync.value;
@@ -92,6 +131,16 @@ temperature 36, humidity 38, and pressure 42 for every source.
 
 The note tables remain available as `rhythmBandNotes` and `rhythmSensorNotes` in
 `~spectrumConfig`; frequency boundaries are derived from the received scale order.
+
+## Selection hysteresis
+
+`perBand` and `topN` retain valid incumbents. A challenger replaces the weakest
+incumbent only after that incumbent's minimum residence time and only when the
+challenger exceeds it by the configured relative margin. Invalid, stale, muted, and
+unavailable sources leave immediately. A margin and residence of zero reproduce
+immediate ranking. `fixedBand` has no winner and therefore needs no selection
+hysteresis. Tracked sustained/audio and rhythm selections keep separate state, so one
+can remain stable while the other changes.
 
 ## Ableton Live 12 Intro
 

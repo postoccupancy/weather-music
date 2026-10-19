@@ -53,11 +53,18 @@ if(~weatherLeaseAcquire.isNil) {
     temperatureMidiChannel: 1, humidityMidiChannel: 2, pressureMidiChannel: 3,
     midiExpressionFloor: 0.0001, midiExpressionCeiling: 0.005,
     midiExpressionSmoothing: 0.5, midiExpressionDeadband: 2, midiNoteOnVelocity: 64,
+    toneSelection: \all, toneSelectionCount: 48,
+    toneSelectionMargin: 0.0, toneSelectionResidence: 0.0,
     rhythmEnabled: true, rhythmMidiDevice: "IAC Driver", rhythmMidiPort: "Bus 4 - Ableton Rhythm",
     rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
     rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 4.0,
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
     rhythmSelection: \perBand, rhythmSelectionCount: 3, rhythmActivityThreshold: 0.0,
+    rhythmSelectionMargin: 0.0, rhythmSelectionResidence: 0.0,
+    rhythmExpression: \velocity, rhythmConstantVelocity: 80,
+    rhythmPhaseMaxCycles: 0.25, rhythmPhaseSmoothing: 2.0,
+    rhythmEuclideanSteps: 8, rhythmEuclideanMinHits: 1, rhythmEuclideanMaxHits: 8,
+    rhythmEuclideanDensityHysteresis: 0.08,
     rhythmNoteMapping: \perBand, rhythmSensorNotes: (temperature:36, humidity:38, pressure:42),
     rhythmBandNotes: [36, 38, 42],
     diagnosticsSeconds: 10.0, rejectDiagnostics: true, rejectDiagnosticSeconds: 5.0,
@@ -107,6 +114,48 @@ if(~weatherLeaseAcquire.isNil) {
         cursor = cursor + size;
         indices
     })
+};
+~spectrumSelectionItems = { |st, mode, requested, states, prefix, now, margin=0, residence=0|
+    var candidates = List.new, partitions, selected = List.new, count = requested.asInteger.clip(1, 48);
+    st[\rows].do { |row, index|
+        var significance = ~spectrumSignificance.value(row);
+        if(significance.notNil and: { significance > 0 }) {
+            candidates.add((key:index.asString, index:index, hz:row[0], significance:significance));
+        };
+    };
+    partitions = ~spectrumRhythmPartitions.value(st[\rows], count);
+    if(mode == \all) { selected = candidates } {
+        if(mode == \fixedBand) {
+            partitions.do { |indices, band|
+                var values = indices.collect { |index| ~spectrumSignificance.value(st[\rows][index]) ? 0 };
+                selected.add((key:("band/" ++ band), index:nil, band:band,
+                    hz:(indices.sum { |index| st[\rows][index][0].log } / indices.size).exp,
+                    significance:values.sum / indices.size, indices:indices));
+            };
+        } {
+            if(mode == \topN) {
+                var bucket = states[prefix ++ "/topN"] ? Dictionary.new;
+                states[prefix ++ "/topN"] = bucket;
+                selected = ~weatherSelectHysteretic.value(candidates, bucket, count, \significance,
+                    now, margin, residence).as(List);
+            } {
+                partitions.do { |indices, band|
+                    var bucketKey = prefix ++ "/band/" ++ band;
+                    var bucket = states[bucketKey] ? Dictionary.new;
+                    var available = candidates.select { |item| indices.includes(item[\index]) };
+                    states[bucketKey] = bucket;
+                    ~weatherSelectHysteretic.value(available, bucket, 1, \significance,
+                        now, margin, residence).do { |item|
+                        var copy = item.copy; copy[\band] = band; selected.add(copy)
+                    };
+                };
+            };
+        };
+    };
+    selected
+};
+~spectrumClearSelectionPrefix = { |states, prefix|
+    states.keys.asArray.do { |key| if(key.beginsWith(prefix ++ "/")) { states.removeAt(key) } }
 };
 
 // MIDI transport is isolated behind these functions so fixture tests can inject
@@ -181,74 +230,67 @@ if(~weatherLeaseAcquire.isNil) {
         };
     } { run[\rhythmError] = "disabled" };
 };
-~spectrumRhythmDesired = { |run|
-    var c = ~spectrumConfig, desired = Dictionary.new;
+~spectrumRhythmDesired = { |run, suppliedNow|
+    var c = ~spectrumConfig, desired = Dictionary.new, now = suppliedNow ? Main.elapsedTime;
+    run[\rhythmSelectionState] = run[\rhythmSelectionState] ? Dictionary.new;
     run[\streams].values.do { |st|
-        var candidates = List.new, chosen = List.new, channel, partitions;
+        var chosen, channel, partitions;
         if(st[\ready] and: { st[\rows].size == 48 }) {
             partitions = ~spectrumRhythmPartitions.value(st[\rows], c[\rhythmSelectionCount]);
-            st[\rows].do { |row, index| var significance = ~spectrumSignificance.value(row);
-                if(significance.notNil and: { significance > 0 }) {
-                    candidates.add((index:index, hz:row[0], significance:significance,
-                        band:partitions.detectIndex { |indices| indices.includes(index) } ? 0));
-                };
-            };
             channel = (c[(st[\signal].asString ++ "MidiChannel").asSymbol] ? 1).asInteger.clip(1,3) - 1;
-            if(c[\rhythmSelection] == \fixedBand) {
-                partitions.do { |indices, band|
-                    var values = indices.collect { |index| ~spectrumSignificance.value(st[\rows][index]) ? 0 };
-                    var significance = values.sum / indices.size;
-                    var hz = (indices.sum { |index| st[\rows][index][0].log } / indices.size).exp;
-                    var note = if(c[\rhythmNoteMapping] == \perSensor) {
-                        c[\rhythmSensorNotes][st[\signal]] ? 36
-                    } { c[\rhythmBandNotes].wrapAt(band) ? 36 };
-                    var key = st[\signal].asString ++ "/band/" ++ band;
-                    desired[key] = (key:key, channel:channel, note:note.asInteger.clip(0,127), sourceHz:hz,
-                        level:significance, significance:significance, signal:st[\signal], scale:nil, band:band,
-                        active:st[\muted].not and: { significance > (c[\rhythmActivityThreshold] ? 0) });
+            chosen = ~spectrumSelectionItems.value(st, c[\rhythmSelection], c[\rhythmSelectionCount],
+                run[\rhythmSelectionState], st[\signal].asString, now,
+                c[\rhythmSelectionMargin], c[\rhythmSelectionResidence]);
+            if(st[\muted] and: { c[\rhythmSelection] != \fixedBand }) {
+                ~spectrumClearSelectionPrefix.value(run[\rhythmSelectionState], st[\signal].asString);
+            };
+            chosen.do { |item|
+                var band = item[\band] ? partitions.detectIndex { |indices| indices.includes(item[\index]) } ? 0;
+                var note = if(c[\rhythmNoteMapping] == \perSensor) {
+                    c[\rhythmSensorNotes][st[\signal]] ? 36
+                } { c[\rhythmBandNotes].wrapAt(band) ? 36 };
+                var key = st[\signal].asString ++ "/" ++ item[\key];
+                var active = st[\muted].not and: {
+                    item[\significance] > (c[\rhythmActivityThreshold] ? 0)
                 };
-            } {
-                if(st[\muted].not) {
-                    if(c[\rhythmSelection] == \topN) {
-                        chosen = candidates.asArray.sort { |a,b| a[\significance] > b[\significance] }
-                            .keep(c[\rhythmSelectionCount].asInteger.clip(1, 48)).as(List);
-                    } {
-                        partitions.do { |indices, band|
-                            var match = candidates.select { |item| indices.includes(item[\index]) }
-                                .sort { |a,b| a[\significance] > b[\significance] }.first;
-                            if(match.notNil) { chosen.add(match) };
-                        };
-                    };
-                    chosen.do { |item|
-                        var note = if(c[\rhythmNoteMapping] == \perSensor) {
-                            c[\rhythmSensorNotes][st[\signal]] ? 36
-                        } { c[\rhythmBandNotes].wrapAt(item[\band]) ? 36 };
-                        var key = st[\signal].asString ++ "/" ++ item[\index];
-                        desired[key] = (key:key, channel:channel, note:note.asInteger.clip(0,127), sourceHz:item[\hz],
-                            level:item[\significance], significance:item[\significance], signal:st[\signal],
-                            scale:item[\index], band:item[\band], active:true);
-                    };
+                if((c[\rhythmSelection] == \fixedBand) or: { active }) {
+                    desired[key] = (key:key, channel:channel, note:note.asInteger.clip(0,127), sourceHz:item[\hz],
+                        level:item[\significance], significance:item[\significance], signal:st[\signal],
+                        scale:item[\index], band:band, active:active);
                 };
             };
+        } {
+            ~spectrumClearSelectionPrefix.value(run[\rhythmSelectionState], st[\signal].asString);
         };
     };
     desired
 };
 ~spectrumRhythmSync = { |run, now|
     now = now ? Main.elapsedTime;
-    ~weatherRhythmSync.value(run, if(~spectrumConfig[\rhythmEnabled]) { ~spectrumRhythmDesired.value(run) } { Dictionary.new },
+    ~weatherRhythmSync.value(run, if(~spectrumConfig[\rhythmEnabled]) { ~spectrumRhythmDesired.value(run, now) } { Dictionary.new },
         now, ~spectrumConfig, ~spectrumRhythmEmit)
 };
-~spectrumMidiDesired = { |run|
-    var desired = Dictionary.new, c = ~spectrumConfig;
+~spectrumMidiDesired = { |run, suppliedNow|
+    var desired = Dictionary.new, c = ~spectrumConfig, now = suppliedNow ? Main.elapsedTime;
+    run[\toneSelectionState] = run[\toneSelectionState] ? Dictionary.new;
     run[\streams].values.do { |st|
         var channel = (c[(st[\signal].asString ++ "MidiChannel").asSymbol] ? 1).asInteger.clip(1, 3) - 1;
-        var targets = st[\targets] ? [];
+        var targets = st[\targets] ? [], selected;
         if(st[\ready] and: { st[\muted].not } and: { st[\rows].size == targets.size }) {
-            st[\rows].do { |row, index|
-                var amp = targets[index], note, key, entry;
+            selected = if(c[\toneSelection] == \all) {
+                Array.fill(st[\rows].size, { |index| (key:index.asString, index:index, hz:st[\rows][index][0]) })
+            } {
+                ~spectrumSelectionItems.value(st, c[\toneSelection], c[\toneSelectionCount],
+                    run[\toneSelectionState], st[\signal].asString, now,
+                    c[\toneSelectionMargin], c[\toneSelectionResidence])
+            };
+            selected.do { |item|
+                var amp = if(item[\indices].notNil) { item[\indices].collect { |index| targets[index] }.sum / item[\indices].size } {
+                    targets[item[\index]]
+                };
+                var note, key, entry;
                 if(amp > 0) {
-                    note = (~spectrumMidiCoordinate.value(row[0], c, st[\signal]) + 0.5).floor.asInteger.clip(0, 127);
+                    note = (~spectrumMidiCoordinate.value(item[\hz], c, st[\signal]) + 0.5).floor.asInteger.clip(0, 127);
                     key = channel.asString ++ "/" ++ note.asString;
                     entry = desired[key];
                     if(entry.isNil) {
@@ -258,6 +300,8 @@ if(~weatherLeaseAcquire.isNil) {
                     };
                 };
             };
+        } {
+            ~spectrumClearSelectionPrefix.value(run[\toneSelectionState], st[\signal].asString);
         };
     };
     desired
@@ -265,7 +309,7 @@ if(~weatherLeaseAcquire.isNil) {
 ~spectrumMidiUpdate = { |run|
     var c = ~spectrumConfig, desired, now = Main.elapsedTime, dt, alpha, floor, ceiling, deadband, velocity;
     if(c[\toneEnabled].not or: { c[\midiEnabled].not } or: { run[\midiConnected].not }) { ~spectrumMidiPanicRun.value(run) } {
-        desired = ~spectrumMidiDesired.value(run);
+        desired = ~spectrumMidiDesired.value(run, now);
         floor = c[\midiExpressionFloor]; ceiling = c[\midiExpressionCeiling];
         deadband = c[\midiExpressionDeadband].asInteger; velocity = c[\midiNoteOnVelocity].asInteger;
         dt = (now - (run[\midiLastUpdate] ? now)).max(0.001); run[\midiLastUpdate] = now;
@@ -555,16 +599,17 @@ if(~weatherLeaseAcquire.isNil) {
     var run = ~spectrumRun, c = ~spectrumConfig;
     if(run.isNil) { "Spectrum rhythm: stopped enabled=% destination='% / %'".format(
         c[\rhythmEnabled], c[\rhythmMidiDevice], c[\rhythmMidiPort]).postln } {
-        "Spectrum rhythm: enabled=% connected=% selection=% bands=% noteMapping=% sources=% active=% gates=% error=%".format(
+        "Spectrum rhythm: enabled=% connected=% selection=% bands=% expression=% noteMapping=% sources=% active=% gates=% error=%".format(
             c[\rhythmEnabled], run[\rhythmConnected], c[\rhythmSelection], c[\rhythmSelectionCount],
-            c[\rhythmNoteMapping], run[\rhythmSources].size,
+            c[\rhythmExpression], c[\rhythmNoteMapping], run[\rhythmSources].size,
             run[\rhythmSources].values.count { |source| source[\active] ? true },
             run[\rhythmGates].size, run[\rhythmError]).postln;
         run[\rhythmSources].keys.asArray.sort.do { |key| var source = run[\rhythmSources][key];
-            "  source=% active=% representativeHz=% pulseHz=% bpm=% aggregateSignificance=% velocity=% channel=% note=% phase=%".format(
+            "  source=% active=% representativeHz=% cycleHz=% stepHz=% steps=% hits=% significance=% velocity=% channel=% note=% phase=% offset=%".format(
                 key, source[\active] ? true, source[\sourceHz].round(0.000001), source[\rateHz].round(0.001),
-                (source[\rateHz] * 60).round(0.1), source[\significance].round(0.001),
-                source[\velocity], source[\channel] + 1, source[\note], source[\phase].round(0.001)).postln;
+                (source[\rateHz] * (c[\rhythmEuclideanSteps] ? 8)).round(0.001), c[\rhythmEuclideanSteps],
+                source[\euclideanHits], source[\significance].round(0.001), source[\velocity],
+                source[\channel] + 1, source[\note], source[\phase].round(0.001), source[\phaseOffset].round(0.001)).postln;
         };
     };
 };
@@ -638,12 +683,52 @@ if(~weatherLeaseAcquire.isNil) {
 ~spectrumSetRhythmSelection = { |mode=\perBand, count=3|
     if([\perBand, \topN, \fixedBand].includes(mode) and: { count.isInteger } and: { count >= 1 } and: { count <= 48 }) {
         ~spectrumConfig[\rhythmSelection] = mode; ~spectrumConfig[\rhythmSelectionCount] = count;
+        if(~spectrumRun.notNil) { ~spectrumRun[\rhythmSelectionState].clear };
     } { "Spectrum rhythm selection requires perBand/topN/fixedBand and a count from 1 to 48.".warn };
 };
 ~spectrumSetRhythmActivityThreshold = { |threshold=0.0|
     if(~spectrumFinite.value(threshold) and: { threshold >= 0 }) {
         ~spectrumConfig[\rhythmActivityThreshold] = threshold;
     } { "Spectrum rhythm activity threshold must be finite and nonnegative.".warn };
+};
+~spectrumSetRhythmSelectionHysteresis = { |margin=0.20, residence=30.0|
+    if(~spectrumFinite.value(margin) and: { margin >= 0 } and: { ~spectrumFinite.value(residence) } and: { residence >= 0 }) {
+        ~spectrumConfig[\rhythmSelectionMargin] = margin; ~spectrumConfig[\rhythmSelectionResidence] = residence;
+    } { "Spectrum rhythm hysteresis requires nonnegative margin and residence seconds.".warn };
+};
+~spectrumSetRhythmExpression = { |mode=\velocity|
+    if([\off, \velocity, \phase, \euclidean].includes(mode)) { ~spectrumConfig[\rhythmExpression] = mode }
+    { "Spectrum rhythm expression must be off, velocity, phase, or euclidean.".warn };
+};
+~spectrumSetRhythmConstantVelocity = { |velocity=80|
+    if(velocity.isInteger and: { velocity >= 1 } and: { velocity <= 127 }) { ~spectrumConfig[\rhythmConstantVelocity] = velocity }
+    { "Spectrum constant rhythm velocity must be an integer from 1 to 127.".warn };
+};
+~spectrumSetRhythmPhase = { |maximum=0.25, smoothing=2.0|
+    if(~spectrumFinite.value(maximum) and: { maximum >= 0 } and: { maximum < 0.5 }
+        and: { ~spectrumFinite.value(smoothing) } and: { smoothing >= 0 }) {
+        ~spectrumConfig[\rhythmPhaseMaxCycles] = maximum; ~spectrumConfig[\rhythmPhaseSmoothing] = smoothing;
+    } { "Spectrum phase expression requires displacement 0..<0.5 cycles and nonnegative smoothing seconds.".warn };
+};
+~spectrumSetRhythmEuclidean = { |steps=8, minimum=1, maximum=8, hysteresis=0.08|
+    if(steps.isInteger and: { minimum.isInteger } and: { maximum.isInteger }
+        and: { steps >= 1 } and: { steps <= 64 } and: { minimum >= 0 }
+        and: { maximum >= minimum } and: { maximum <= steps }
+        and: { ~spectrumFinite.value(hysteresis) } and: { hysteresis >= 0 } and: { hysteresis < 0.5 }) {
+        ~spectrumConfig[\rhythmEuclideanSteps] = steps; ~spectrumConfig[\rhythmEuclideanMinHits] = minimum;
+        ~spectrumConfig[\rhythmEuclideanMaxHits] = maximum; ~spectrumConfig[\rhythmEuclideanDensityHysteresis] = hysteresis;
+    } { "Spectrum Euclidean settings require 1..64 steps and 0 <= minimum <= maximum <= steps.".warn };
+};
+~spectrumSetToneSelection = { |mode=\all, count=48|
+    if([\all, \perBand, \fixedBand, \topN].includes(mode) and: { count.isInteger } and: { count >= 1 } and: { count <= 48 }) {
+        ~spectrumConfig[\toneSelection] = mode; ~spectrumConfig[\toneSelectionCount] = count;
+        if(~spectrumRun.notNil) { ~spectrumRun[\toneSelectionState].clear };
+    } { "Spectrum tone selection requires all/perBand/fixedBand/topN and a count from 1 to 48.".warn };
+};
+~spectrumSetToneSelectionHysteresis = { |margin=0.10, residence=5.0|
+    if(~spectrumFinite.value(margin) and: { margin >= 0 } and: { ~spectrumFinite.value(residence) } and: { residence >= 0 }) {
+        ~spectrumConfig[\toneSelectionMargin] = margin; ~spectrumConfig[\toneSelectionResidence] = residence;
+    } { "Spectrum tone hysteresis requires nonnegative margin and residence seconds.".warn };
 };
 ~spectrumSetRhythmNotes = { |bandNotes, temperature=36, humidity=38, pressure=42|
     var notes = (bandNotes ? []).asArray ++ [temperature, humidity, pressure];
@@ -775,7 +860,8 @@ if(~weatherLeaseAcquire.isNil) {
             midiOut: nil, midiConnected: false, midiError: nil, midiActive: Dictionary.new,
             midiChannelsUsed: Set.new, midiLastUpdate: Main.elapsedTime,
             rhythmOut: nil, rhythmConnected: false, rhythmError: nil,
-            rhythmSources: Dictionary.new, rhythmGates: Dictionary.new);
+            rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, rhythmCursor: 0,
+            rhythmSelectionState: Dictionary.new, toneSelectionState: Dictionary.new);
         ~spectrumRun = run;
         [\temperature, \humidity, \pressure].do { |signal|
             run[\streams]["/osc/indoor-sky/" ++ signal ++ "/cwt/spectrum"] = (signal: signal, ready: false,

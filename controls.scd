@@ -50,6 +50,12 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~cwtSetRhythmRate.value(1, 4.0); // the pulse range that the 48 0.05-1Hz weather frequencies map to, in Hz e.g. 0.5-5Hz = 30-240 BPM
 ~cwtSetRhythmPulseDuration.value(0.08); // MIDI note duration in seconds
 ~cwtSetRhythmVelocity.value(0.0, 1.0, 35, 110); // amplitude input range maps to MIDI output range -- how strongly a weather effect hits
+~cwtSetRhythmExpression.value(\velocity); // or \off, \phase, \euclidean
+~cwtSetRhythmConstantVelocity.value(80); // used by off, phase, and euclidean
+~cwtSetRhythmPhase.value(0.25, 2.0); // maximum cycles, smoothing seconds
+~cwtSetRhythmEuclidean.value(8, 1, 8); // steps per cycle, minimum hits, maximum hits
+~cwtSetSelectionHysteresis.value(0.20, 30.0); // tracked sustained/audio margin, residence seconds
+~cwtSetRhythmSelectionHysteresis.value(0.20, 30.0); // independent tracked rhythm selection
 
 ~cwtSetRhythmNotes.value([36, 38, 42, 45]);   // deterministic channel-slot notes
 
@@ -69,6 +75,20 @@ MIDIClient.init; MIDIClient.destinations.postln;
 ~spectrumSetRhythmSelection.value(\fixedBand, 3); // N persistent bands with mean-significance expression
 ~spectrumSetRhythmSelection.value(\topN, 1); // strongest N scales across each sensor, count 1..48
 ~spectrumSetRhythmActivityThreshold.value(0.0); // fixedBand suppresses pulses at/below this significance
+~spectrumSetRhythmSelectionHysteresis.value(0.20, 30.0); // relative margin, residence seconds
+
+// Rhythm expression
+~spectrumSetRhythmExpression.value(\velocity); // or \off, \phase, \euclidean
+~spectrumSetRhythmConstantVelocity.value(80);
+~spectrumSetRhythmPhase.value(0.25, 2.0); // maximum cycles, smoothing seconds
+~spectrumSetRhythmEuclidean.value(8, 1, 8); // mapped pulse rate becomes pattern-cycle frequency
+
+// Sustained spectrum MIDI selection on Bus 3 (independent of rhythm selection)
+~spectrumSetToneSelection.value(\all, 48);
+~spectrumSetToneSelection.value(\perBand, 3);
+~spectrumSetToneSelection.value(\fixedBand, 3);
+~spectrumSetToneSelection.value(\topN, 6);
+~spectrumSetToneSelectionHysteresis.value(0.10, 5.0);
 
 // Note mapping -- are notes assigned by band or by sensor
 ~spectrumSetRhythmNoteMapping.value(\perBand);  // default

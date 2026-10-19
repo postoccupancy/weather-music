@@ -170,8 +170,29 @@ disable, stop, server quit, and Command-period release affected notes. Panic sen
 all-notes-off only on spectrum-owned channels 1–3. Tracked voices own channels 4–16,
 so cleanup and reconnects in either sketch cannot reset the other sketch's MIDI state.
 
-No pitch bend is sent, so unrelated notes cannot be bent. This initial mode has no
-rhythmic pulses, selection, top-N ranking, or persistence behavior.
+Bus 3 tone selection is independent of Bus 4 rhythm selection. `all` is the default
+and preserves the original 48-scale behavior. `perBand` chooses one significant scale
+from each automatic band, `topN` chooses the strongest N scales across the sensor, and
+`fixedBand` emits one representative tone at the band's geometric-mean environmental
+frequency with the mean effective band amplitude. Selection occurs before MIDI-note
+aggregation, so scales that map to the same MIDI note still share the existing summed
+amplitude and note ownership.
+
+```supercollider
+~spectrumSetToneSelection.value(\all, 48);
+~spectrumSetToneSelection.value(\perBand, 3);
+~spectrumSetToneSelection.value(\fixedBand, 3);
+~spectrumSetToneSelection.value(\topN, 6);
+~spectrumSetToneSelectionHysteresis.value(0.10, 5.0);
+```
+
+Tone hysteresis applies only to `perBand` and `topN`. The relative margin and minimum
+residence use monotonic time; invalid and stale incumbents release immediately. Native
+SuperCollider spectrum audio remains a 48-oscillator bank and is unaffected by this
+MIDI-only selection.
+
+No pitch bend is sent, so unrelated notes cannot be bent. Spectrum rhythm remains a
+separate Bus 4 output with its own selection, expression, timing, and cleanup state.
 
 ### Ableton Live routing on macOS
 
@@ -236,6 +257,8 @@ On macOS, from this repository:
 
 ```sh
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/live-spectrum-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-tone-selection-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/selection-hysteresis-test.scd
 ```
 
 The fixture uses loopback UDP 19000, never registers with the Pi, and keeps master

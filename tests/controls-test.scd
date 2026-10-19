@@ -13,6 +13,8 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
     \cwtSetMidiExpression, \cwtMidiStatus, \cwtMidiPanic, \cwtMidiResync,
     \cwtSetToneEnabled, \cwtSetRhythmDestination, \cwtSetRhythmEnabled, \cwtSetRhythmRate,
     \cwtSetRhythmPulseDuration, \cwtSetRhythmVelocity, \cwtSetRhythmNotes, \cwtRhythmStatus, \cwtRhythmResync, \cwtRhythmPanic,
+    \cwtSetRhythmExpression, \cwtSetRhythmConstantVelocity, \cwtSetRhythmPhase, \cwtSetRhythmEuclidean,
+    \cwtSetSelectionHysteresis, \cwtSetRhythmSelectionHysteresis,
     \spectrumSetMode, \spectrumSetGain, \spectrumMute, \spectrumSetBaseNote,
     \spectrumSetPitchSpan, \spectrumSetWaveform, \spectrumSetOutputBus,
     \spectrumStatus, \spectrumInspect, \spectrumStop, \spectrumStart,
@@ -21,6 +23,9 @@ check = { |condition, label| if(condition) { ("PASS: " ++ label).postln } { Erro
     \spectrumSetToneEnabled, \spectrumSetRhythmDestination, \spectrumSetRhythmEnabled,
     \spectrumSetRhythmRate, \spectrumSetRhythmPulseDuration, \spectrumSetRhythmVelocity, \spectrumSetRhythmSelection,
     \spectrumSetRhythmActivityThreshold, \spectrumSetRhythmNotes, \spectrumSetRhythmNoteMapping,
+    \spectrumSetRhythmExpression, \spectrumSetRhythmConstantVelocity, \spectrumSetRhythmPhase,
+    \spectrumSetRhythmEuclidean, \spectrumSetRhythmSelectionHysteresis,
+    \spectrumSetToneSelection, \spectrumSetToneSelectionHysteresis,
     \spectrumRhythmStatus, \spectrumRhythmResync, \spectrumRhythmPanic
 ].do { |name| currentEnvironment.put(name, { |...args| calls.add([name] ++ args) }) };
 

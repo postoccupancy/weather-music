@@ -166,7 +166,10 @@ With SuperCollider installed, run the native local fixture test:
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/live-cwt-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/controls-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/midi-rhythm-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/rhythm-expression-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/selection-hysteresis-test.scd
 /Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-rhythm-selection-test.scd
+/Applications/SuperCollider.app/Contents/MacOS/sclang -D tests/spectrum-tone-selection-test.scd
 ```
 
 It boots local audio **muted**, uses isolated loopback OSC on 19001/50055 (no Pi
@@ -174,7 +177,8 @@ subscription), and tests mapping, confidence/polyphony selection, sensor gain/mu
 waveforms, output fallback, node continuity, release, readiness, ID reuse,
 heartbeat, timeout, independent bends, note rebasing, expression, MIDI cleanup, and
 repeated cleanup. The rhythm fixtures use explicit timestamps and mocked MIDI to test
-phase, velocity, overlapping gate ownership, band/top-N selection, and note mapping.
+phase, velocity, Euclidean density, global event budgets, overlapping gate ownership,
+selection hysteresis, spectrum tone/rhythm independence, band/top-N selection, and note mapping.
 `tests/live-concurrent-test.scd` verifies
 both instruments share a lease and that stopping one does not unsubscribe the other.
 `tests/controls-test.scd` executes the control panel against API spies to catch

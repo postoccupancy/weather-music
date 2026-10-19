@@ -65,6 +65,12 @@ if(~weatherLeaseAcquire.isNil) {
     rhythmSourceMinHz: 0.05, rhythmSourceMaxHz: 1.0, rhythmPulseMinHz: 0.5, rhythmPulseMaxHz: 4.0,
     rhythmPulseDuration: 0.08, rhythmVelocityInputFloor: 0.0, rhythmVelocityInputCeiling: 1.0,
     rhythmVelocityMin: 35, rhythmVelocityMax: 110, rhythmMaxEventsPerTick: 16,
+    rhythmExpression: \velocity, rhythmConstantVelocity: 80,
+    rhythmPhaseMaxCycles: 0.25, rhythmPhaseSmoothing: 2.0,
+    rhythmEuclideanSteps: 8, rhythmEuclideanMinHits: 1, rhythmEuclideanMaxHits: 8,
+    rhythmEuclideanDensityHysteresis: 0.08,
+    toneSelectionMargin: 0.0, toneSelectionResidence: 0.0,
+    rhythmSelectionMargin: 0.0, rhythmSelectionResidence: 0.0,
     rhythmNotes: [36, 38, 42, 45],
     trafficTimeout: 15, diagnosticsInterval: 5
 );
@@ -216,6 +222,9 @@ if(~weatherLeaseAcquire.isNil) {
         }
     }.keep(limit)
 };
+~cwtSelectHysteretic = { |candidates, state, limit, now, margin=0, residence=0|
+    ~weatherSelectHysteretic.value(candidates, state, limit, \confidence, now, margin, residence)
+};
 
 ~cwtSynthDef = SynthDef(\weatherCwtSine, {
     |out=0, freq=440, amp=0, master=0.8, gate=1,
@@ -334,6 +343,39 @@ if(~weatherLeaseAcquire.isNil) {
         ~cwtConfig[\rhythmVelocityMin] = velocityMin; ~cwtConfig[\rhythmVelocityMax] = velocityMax;
     } { "Invalid tracked rhythm velocity mapping.".warn };
 };
+~cwtSetRhythmExpression = { |mode=\velocity|
+    if([\off, \velocity, \phase, \euclidean].includes(mode)) { ~cwtConfig[\rhythmExpression] = mode }
+    { "Tracked rhythm expression must be off, velocity, phase, or euclidean.".warn };
+};
+~cwtSetRhythmConstantVelocity = { |velocity=80|
+    if(velocity.isInteger and: { velocity >= 1 } and: { velocity <= 127 }) { ~cwtConfig[\rhythmConstantVelocity] = velocity }
+    { "Tracked constant rhythm velocity must be an integer from 1 to 127.".warn };
+};
+~cwtSetRhythmPhase = { |maximum=0.25, smoothing=2.0|
+    if(maximum.isNumber and: { maximum >= 0 } and: { maximum < 0.5 }
+        and: { smoothing.isNumber } and: { smoothing >= 0 }) {
+        ~cwtConfig[\rhythmPhaseMaxCycles] = maximum; ~cwtConfig[\rhythmPhaseSmoothing] = smoothing;
+    } { "Tracked phase expression requires displacement 0..<0.5 cycles and nonnegative smoothing seconds.".warn };
+};
+~cwtSetRhythmEuclidean = { |steps=8, minimum=1, maximum=8, hysteresis=0.08|
+    if(steps.isInteger and: { minimum.isInteger } and: { maximum.isInteger }
+        and: { steps >= 1 } and: { steps <= 64 } and: { minimum >= 0 }
+        and: { maximum >= minimum } and: { maximum <= steps }
+        and: { hysteresis.isNumber } and: { hysteresis >= 0 } and: { hysteresis < 0.5 }) {
+        ~cwtConfig[\rhythmEuclideanSteps] = steps; ~cwtConfig[\rhythmEuclideanMinHits] = minimum;
+        ~cwtConfig[\rhythmEuclideanMaxHits] = maximum; ~cwtConfig[\rhythmEuclideanDensityHysteresis] = hysteresis;
+    } { "Tracked Euclidean settings require 1..64 steps and 0 <= minimum <= maximum <= steps.".warn };
+};
+~cwtSetSelectionHysteresis = { |margin=0.20, residence=30.0|
+    if(margin.isNumber and: { margin >= 0 } and: { residence.isNumber } and: { residence >= 0 }) {
+        ~cwtConfig[\toneSelectionMargin] = margin; ~cwtConfig[\toneSelectionResidence] = residence;
+    } { "Tracked tone selection hysteresis requires nonnegative margin and residence seconds.".warn };
+};
+~cwtSetRhythmSelectionHysteresis = { |margin=0.20, residence=30.0|
+    if(margin.isNumber and: { margin >= 0 } and: { residence.isNumber } and: { residence >= 0 }) {
+        ~cwtConfig[\rhythmSelectionMargin] = margin; ~cwtConfig[\rhythmSelectionResidence] = residence;
+    } { "Tracked rhythm selection hysteresis requires nonnegative margin and residence seconds.".warn };
+};
 ~cwtSetRhythmNotes = { |notes|
     if(notes.isArray and: { notes.notEmpty } and: { notes.every { |note| note.isInteger and: { note >= 0 } and: { note <= 127 } } }) {
         ~cwtConfig[\rhythmNotes] = notes.copy;
@@ -412,7 +454,8 @@ if(~weatherLeaseAcquire.isNil) {
         port: config[\localPort], voices: Dictionary.new, streams: Dictionary.new,
         synths: Dictionary.new, midiVoices: Dictionary.new, midiOut: nil,
         midiConnected: false, midiError: nil, rhythmOut: nil, rhythmConnected: false,
-        rhythmError: nil, rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, lastDiagnostic: 0);
+        rhythmError: nil, rhythmSources: Dictionary.new, rhythmGates: Dictionary.new, rhythmCursor: 0,
+        toneSelectionState: Dictionary.new, rhythmSelectionState: Dictionary.new, lastDiagnostic: 0);
     ~cwtRun = run;
     ~cwtMidiConnect.value(run);
     ~cwtRhythmConnect.value(run);
@@ -475,7 +518,7 @@ if(~weatherLeaseAcquire.isNil) {
         };
     };
     reconcile = {
-        var now = Main.elapsedTime, candidates, selected, selectedKeys, counts = Dictionary.new;
+        var now = Main.elapsedTime, candidates, selected, rhythmSelected, selectedKeys, counts = Dictionary.new;
         var rhythmDesired = Dictionary.new, rhythmUsed = Set.new;
         var threshold = config[\minConfidence], releasing;
         if(threshold.isNumber.not or: { threshold.isNaN } or: { threshold < 0 } or: { threshold > 1 }) { threshold = 0 };
@@ -493,9 +536,15 @@ if(~weatherLeaseAcquire.isNil) {
         };
         // Exactly the browser's per-device normalization, before the polyphony cap.
         candidates.do { |voice| counts[voice[\device]] = (counts[voice[\device]] ? 0) + 1 };
-        selected = ~cwtSelect.value(candidates, run[\synths], config[\maxPolyphony].asInteger.max(0));
+        selected = ~cwtSelectHysteretic.value(candidates, run[\toneSelectionState],
+            config[\maxPolyphony].asInteger.max(0), now,
+            config[\toneSelectionMargin], config[\toneSelectionResidence]);
+        rhythmSelected = ~cwtSelectHysteretic.value(candidates, run[\rhythmSelectionState],
+            config[\maxPolyphony].asInteger.max(0), now,
+            config[\rhythmSelectionMargin], config[\rhythmSelectionResidence]);
         selectedKeys = selected.collect { |voice| voice[\key] };
-        selectedKeys.do { |key| var source = run[\rhythmSources][key]; if(source.notNil) { rhythmUsed.add(source[\channel]) } };
+        rhythmSelected.do { |voice| var source = run[\rhythmSources][voice[\key]];
+            if(source.notNil) { rhythmUsed.add(source[\channel]) } };
         run[\midiVoices].keys.asArray.do { |key|
             if(selectedKeys.includesEqual(key).not) { ~cwtMidiRelease.value(run, key) };
         };
@@ -537,6 +586,13 @@ if(~weatherLeaseAcquire.isNil) {
                 entry[\amp] = amp; entry[\waveform] = config[\waveform]; entry[\muted] = muted;
             };
             ~cwtMidiUpdateVoice.value(run, voice, mapped, amp, now);
+        };
+        rhythmSelected.do { |voice|
+            var key = voice[\key], signal = voice[\signal].asSymbol;
+            var sensorGain = (config[(signal.asString ++ "Gain").asSymbol] ? 1).clip(0, 4);
+            var muted = config[(signal.asString ++ "Muted").asSymbol] ? false;
+            var amp = ((0.18 * voice[\confidence]).clip(0.015, 0.22) / counts[voice[\device]].pow(0.35))
+                * sensorGain * muted.not.asInteger;
             if(config[\rhythmEnabled] and: { muted.not } and: { amp > 0 }) {
                 var rhythm = run[\rhythmSources][key], channel, notes = config[\rhythmNotes] ? [36,38,42,45];
                 channel = if(rhythm.notNil) { rhythm[\channel] } {
@@ -553,6 +609,7 @@ if(~weatherLeaseAcquire.isNil) {
         ~weatherRhythmSync.value(run, rhythmDesired, now, config, ~cwtRhythmEmit);
         releasing = run[\synths].values.count { |entry| entry[\releasing] };
         run[\eligibleCount] = candidates.size; run[\selectedCount] = selected.size;
+        run[\rhythmSelectedCount] = rhythmSelected.size;
         run[\releasingCount] = releasing;
         if((now - run[\lastDiagnostic]) >= config[\diagnosticsInterval]) {
             run[\lastDiagnostic] = now;
@@ -638,14 +695,16 @@ if(~weatherLeaseAcquire.isNil) {
     var run = ~cwtRun, c = ~cwtConfig;
     if(run.isNil) { "Tracked rhythm: stopped enabled=% destination='% / %'".format(
         c[\rhythmEnabled], c[\rhythmMidiDevice], c[\rhythmMidiPort]).postln } {
-        "Tracked rhythm: enabled=% connected=% destination='% / %' sources=% gates=% error=%".format(
+        "Tracked rhythm: enabled=% connected=% destination='% / %' expression=% selected=% sources=% gates=% error=%".format(
             c[\rhythmEnabled], run[\rhythmConnected], c[\rhythmMidiDevice], c[\rhythmMidiPort],
+            c[\rhythmExpression], run[\rhythmSelectedCount] ? 0,
             run[\rhythmSources].size, run[\rhythmGates].size, run[\rhythmError]).postln;
         run[\rhythmSources].keys.asArray.sort.do { |key| var source = run[\rhythmSources][key];
-            "  source=% envHz=% pulseHz=% bpm=% confidence=% channel=% note=% phase=%".format(
+            "  source=% envHz=% cycleHz=% stepHz=% steps=% hits=% confidence=% velocity=% channel=% note=% phase=% offset=%".format(
                 key, source[\sourceHz].round(0.000001), source[\rateHz].round(0.001),
-                (source[\rateHz] * 60).round(0.1), source[\confidence].round(0.01),
-                source[\channel] + 1, source[\note], source[\phase].round(0.001)).postln;
+                (source[\rateHz] * (c[\rhythmEuclideanSteps] ? 8)).round(0.001), c[\rhythmEuclideanSteps],
+                source[\euclideanHits], source[\confidence].round(0.01), source[\velocity],
+                source[\channel] + 1, source[\note], source[\phase].round(0.001), source[\phaseOffset].round(0.001)).postln;
         };
     };
 };
